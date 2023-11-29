@@ -1,0 +1,300 @@
+
+ SP=2,world_size128,model_size7
+micro_batch_size585,activation136.17856512
+No solution found
+
+ SP=2,world_size128,model_size13
+micro_batch_size315,activation73.32691968
+No solution found
+
+ SP=2,world_size128,model_size30
+micro_batch_size136,activation31.658606592
+Minimum Communication Cost: 276
+Solution: [[False, True, False], [False, True, False], [False, False, True]]
+
+ SP=2,world_size128,model_size65
+micro_batch_size63,activation14.665383936
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=2,world_size256,model_size7
+micro_batch_size585,activation136.17856512
+No solution found
+
+ SP=2,world_size256,model_size13
+micro_batch_size315,activation73.32691968
+No solution found
+
+ SP=2,world_size256,model_size30
+micro_batch_size136,activation31.658606592
+Minimum Communication Cost: 276
+Solution: [[False, True, False], [False, True, False], [False, False, True]]
+
+ SP=2,world_size256,model_size65
+micro_batch_size63,activation14.665383936
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=2,world_size512,model_size7
+micro_batch_size585,activation136.17856512
+No solution found
+
+ SP=2,world_size512,model_size13
+micro_batch_size315,activation73.32691968
+No solution found
+
+ SP=2,world_size512,model_size30
+micro_batch_size136,activation31.658606592
+Minimum Communication Cost: 276
+Solution: [[False, True, False], [False, True, False], [False, False, True]]
+
+ SP=2,world_size512,model_size65
+micro_batch_size63,activation14.665383936
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=2,world_size1024,model_size7
+micro_batch_size585,activation136.17856512
+No solution found
+
+ SP=2,world_size1024,model_size13
+micro_batch_size315,activation73.32691968
+No solution found
+
+ SP=2,world_size1024,model_size30
+micro_batch_size136,activation31.658606592
+Minimum Communication Cost: 276
+Solution: [[False, True, False], [False, True, False], [False, False, True]]
+
+ SP=2,world_size1024,model_size65
+micro_batch_size63,activation14.665383936
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=4,world_size128,model_size7
+micro_batch_size585,activation68.08928256
+No solution found
+
+ SP=4,world_size128,model_size13
+micro_batch_size315,activation36.66345984
+No solution found
+
+ SP=4,world_size128,model_size30
+micro_batch_size136,activation15.829303296
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=4,world_size128,model_size65
+micro_batch_size63,activation7.332691968
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=4,world_size256,model_size7
+micro_batch_size585,activation68.08928256
+No solution found
+
+ SP=4,world_size256,model_size13
+micro_batch_size315,activation36.66345984
+No solution found
+
+ SP=4,world_size256,model_size30
+micro_batch_size136,activation15.829303296
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=4,world_size256,model_size65
+micro_batch_size63,activation7.332691968
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=4,world_size512,model_size7
+micro_batch_size585,activation68.08928256
+No solution found
+
+ SP=4,world_size512,model_size13
+micro_batch_size315,activation36.66345984
+No solution found
+
+ SP=4,world_size512,model_size30
+micro_batch_size136,activation15.829303296
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=4,world_size512,model_size65
+micro_batch_size63,activation7.332691968
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=4,world_size1024,model_size7
+micro_batch_size585,activation68.08928256
+No solution found
+
+ SP=4,world_size1024,model_size13
+micro_batch_size315,activation36.66345984
+No solution found
+
+ SP=4,world_size1024,model_size30
+micro_batch_size136,activation15.829303296
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=4,world_size1024,model_size65
+micro_batch_size63,activation7.332691968
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=8,world_size128,model_size7
+micro_batch_size585,activation34.04464128
+No solution found
+
+ SP=8,world_size128,model_size13
+micro_batch_size315,activation18.33172992
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=8,world_size128,model_size30
+micro_batch_size136,activation7.914651648
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=8,world_size128,model_size65
+micro_batch_size63,activation3.666345984
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=8,world_size256,model_size7
+micro_batch_size585,activation34.04464128
+No solution found
+
+ SP=8,world_size256,model_size13
+micro_batch_size315,activation18.33172992
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=8,world_size256,model_size30
+micro_batch_size136,activation7.914651648
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=8,world_size256,model_size65
+micro_batch_size63,activation3.666345984
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=8,world_size512,model_size7
+micro_batch_size585,activation34.04464128
+No solution found
+
+ SP=8,world_size512,model_size13
+micro_batch_size315,activation18.33172992
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=8,world_size512,model_size30
+micro_batch_size136,activation7.914651648
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=8,world_size512,model_size65
+micro_batch_size63,activation3.666345984
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=8,world_size1024,model_size7
+micro_batch_size585,activation34.04464128
+No solution found
+
+ SP=8,world_size1024,model_size13
+micro_batch_size315,activation18.33172992
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=8,world_size1024,model_size30
+micro_batch_size136,activation7.914651648
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=8,world_size1024,model_size65
+micro_batch_size63,activation3.666345984
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=16,world_size128,model_size7
+micro_batch_size585,activation17.02232064
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size128,model_size13
+micro_batch_size315,activation9.16586496
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size128,model_size30
+micro_batch_size136,activation3.957325824
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=16,world_size128,model_size65
+micro_batch_size63,activation1.833172992
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=16,world_size256,model_size7
+micro_batch_size585,activation17.02232064
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size256,model_size13
+micro_batch_size315,activation9.16586496
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size256,model_size30
+micro_batch_size136,activation3.957325824
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=16,world_size256,model_size65
+micro_batch_size63,activation1.833172992
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=16,world_size512,model_size7
+micro_batch_size585,activation17.02232064
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size512,model_size13
+micro_batch_size315,activation9.16586496
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size512,model_size30
+micro_batch_size136,activation3.957325824
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=16,world_size512,model_size65
+micro_batch_size63,activation1.833172992
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
+
+ SP=16,world_size1024,model_size7
+micro_batch_size585,activation17.02232064
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size1024,model_size13
+micro_batch_size315,activation9.16586496
+Minimum Communication Cost: 240
+Solution: [[False, True], [False, True], [False, True]]
+
+ SP=16,world_size1024,model_size30
+micro_batch_size136,activation3.957325824
+Minimum Communication Cost: 240
+Solution: [[False, True, False], [False, True, False], [False, True, False]]
+
+ SP=16,world_size1024,model_size65
+micro_batch_size63,activation1.833172992
+Minimum Communication Cost: 240
+Solution: [[False, True, False, False, False], [False, True, False, False, False], [False, True, False, False, False]]
