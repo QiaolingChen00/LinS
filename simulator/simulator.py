@@ -10,7 +10,7 @@ class Simulator:
         self._grad_acc=config["grad_acc"]
         self._SP=config["SP"]
         self._micro_batch_size=config["micro_bs"]
-     
+        print(config)
         self._set_memory_threshold()
 
         self._num_strategies = int(log2(self._world_size / 8)) + 2
@@ -64,7 +64,7 @@ class Simulator:
             comm_cost=self._model_size * (j + 1)
 
         comm_cost=comm_cost+self._SP_comm
-     
+
         return comm_cost
     def _mem_cost(self,i,j):
         if i == 0:
@@ -92,8 +92,9 @@ class Simulator:
     def _get_sp_comm_cost(self,_SP_comm_num):
         if self._SP==1:
             return 0
-        dis=[0,0.75,1.5,3]
-        sp_comm_cost=_SP_comm_num*dis[int(log2(self._SP))]
+        dis=[1,0.9,0.8,0.6,0.1]
+        sp_comm_cost=_SP_comm_num/dis[int(log2(self._SP))]
+ 
         return sp_comm_cost 
 
 

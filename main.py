@@ -43,8 +43,12 @@ def main():
         micro_bs,grad_acc=bs_bn[i][0],bs_bn[i][1]
         config.update({"micro_bs":micro_bs})
         config.update({"grad_acc":grad_acc})
-    simulator = Simulator(config)
-    simulator.run()
+        print(f'\n\nmicro_bs{micro_bs}')
+        for sp in [1,2,4,8,16]:
+            config.update({"SP":sp})
+            print(f'\nSP={sp}')
+            simulator = Simulator(config)
+            simulator.run()
 
 
 if __name__ == "__main__":
