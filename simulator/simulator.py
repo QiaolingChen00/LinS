@@ -9,6 +9,7 @@ class Simulator:
         self._model_size=config["model_size"]
         self._grad_acc=config["grad_acc"]
         self._SP=config["SP"]
+        self._micro_batch_size=config["micro_bs"]
      
         self._set_memory_threshold()
 
@@ -42,26 +43,28 @@ class Simulator:
         return self._h,self._a,self._l
 
     def _set_memory_threshold(self):
-        self._micro_batch_size=self._global_batch_size//self._world_size
+
         self._h,self._a,self._l=self._get_model_config()
         self._activation=self._micro_batch_size*self._sequence_length*self._h*(34+(5*self._a*self._sequence_length/self._h))/10**9/self._SP
+
         self._memory_threshold = 80 - self._activation
         print(f'micro_batch_size{self._micro_batch_size},activation{self._activation}')
 
     def _comm_cost(self,i,j):
-        self._SP_comm=4*self._micro_batch_size*self._h*self._sequence_length/self._SP/10**9
+        self._SP_comm_num=4*self._micro_batch_size*self._h*self._sequence_length/1024/1024/self._SP
+        self._SP_comm=self._get_sp_comm_cost(self._SP_comm_num)
         comm_cost=0
         if j==0:
             comm_cost=0
         if i == 0:
-            comm_cost=2 * self._model_size * (j + 1)+self._SP_comm 
+            comm_cost=2 * self._model_size * (j + 1) 
         elif i == 1:
-            comm_cost=self._grad_acc * self._model_size * (j + 1)+self._SP_comm
+            comm_cost=self._grad_acc * self._model_size * (j + 1)
         else:
-            comm_cost=self._model_size * (j + 1) +self._SP_comm
+            comm_cost=self._model_size * (j + 1)
 
         comm_cost=comm_cost+self._SP_comm
-
+     
         return comm_cost
     def _mem_cost(self,i,j):
         if i == 0:
@@ -86,10 +89,22 @@ class Simulator:
             for j in range(self._num_strategies):
                 self._A[i][j] = self._mem_cost(i, j)
 
+    def _get_sp_comm_cost(self,_SP_comm_num):
+        if self._SP==1:
+            return 0
+        dis=[0,0.75,1.5,3]
+        sp_comm_cost=_SP_comm_num*dis[int(log2(self._SP))]
+        return sp_comm_cost 
+
 
     def _strategy_constraint_strict(self):
         for i in range(3):
-            self._solver.add(Sum([If(self._X [i][j], 1, 0) for j in range(self._num_strategies)]) == 1)
+            self._solver.add(Sum([If(self._X[i][j], 1, 0) for j in range(self._num_strategies)]) == 1)
+        for j in range(1, self._num_strategies):  
+            self._solver.add(Implies(self._X[0][j], Not(self._X[1][j-1])))
+        for j in range(1, self._num_strategies):  
+            self._solver.add(Implies(self._X[1][j], Not(self._X[2][j-1])))
+
             
     def _memory_constraint_strict(self):
         total_memory = Sum([self._A[i][j] * If(self._X[i][j], 1, 0) for i in range(3) for j in range(self._num_strategies)])
