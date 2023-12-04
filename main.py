@@ -15,16 +15,13 @@ def _get_bs(global_bs,world_size,sequence_length):
             factors.append((B, C))
     return factors
 
-
-
-
 def main():
     """main function"""
     config = {
         "world_size": 128,
         "global_batch_size": 4096,
-        "sequence_length": 8192,
-        "model_size":7,
+        "sequence_length": 16384,
+        "model_size":13,
         "grad_acc":1,
         "SP":4
     }
