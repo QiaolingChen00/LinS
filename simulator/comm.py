@@ -19,6 +19,13 @@ class TransformerCommunication:
     def allgather(self,volume,scale):
         comm_alo='Allgather'
         predict = CommPredict(volume,comm_alo,scale).prediction
+        print(f'allgather:{predict}')
+        return predict
+    
+    def reducescatter(self,volume,scale):
+        comm_alo='ReduceScatter'
+        predict = CommPredict(volume,comm_alo,scale).prediction
+        print(f'reducescatter:{predict}')
         return predict
     
     def alltoall(self,volume,scale):
@@ -37,19 +44,19 @@ class TransformerCommunication:
 
     def communication_isp(self):
         qkv_communication_volume=self.get_volume(6*self.h**2,"isp")
-        self.qkv_communication_latency=self.allgather(qkv_communication_volume,self.lins_scale)
+        self.qkv_communication_latency=2*self.allgather(qkv_communication_volume,self.lins_scale)+self.reducescatter(qkv_communication_volume,self.lins_scale)
 
         post_attention_communication_volume=self.get_volume(2*self.h**2,"isp")
-        self.post_attention_communication_latency=self.allgather(post_attention_communication_volume,self.lins_scale)
+        self.post_attention_communication_latency=2*self.allgather(post_attention_communication_volume,self.lins_scale)+self.reducescatter(post_attention_communication_volume,self.lins_scale)
     
         first_linear_communication_volume=self.get_volume(8*self.h**2,"isp")
-        self.first_linear_communication_latency=self.allgather(first_linear_communication_volume,self.lins_scale)
+        self.first_linear_communication_latency=2*self.allgather(first_linear_communication_volume,self.lins_scale)+self.reducescatter(first_linear_communication_volume,self.lins_scale)
 
         second_linear_communication_volume=self.get_volume(8*self.h**2,"isp")
-        self.second_linear_communication_latency=self.allgather(second_linear_communication_volume,self.lins_scale)
+        self.second_linear_communication_latency=2*self.allgather(second_linear_communication_volume,self.lins_scale)+self.reducescatter(second_linear_communication_volume,self.lins_scale)
        
         attention_all_to_all_communication_volume=self.get_volume(4*self.s*self.h,"isp")
-        self.attention_all_to_all_communication_latency=self.alltoall(attention_all_to_all_communication_volume,self.sp_scale)
+        self.attention_all_to_all_communication_latency=2*self.alltoall(attention_all_to_all_communication_volume,self.sp_scale)
 
         return self.attention_all_to_all_communication_latency+self.first_linear_communication_latency+self.second_linear_communication_latency+self.qkv_communication_latency+self.post_attention_communication_latency
 

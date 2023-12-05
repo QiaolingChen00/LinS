@@ -3,7 +3,7 @@ from sklearn.preprocessing import PolynomialFeatures
 
 class CommPredict:
     def __init__(self,num,comm_alo,comm_scale,ib='IB4') -> None:
-        self.num=num
+        self.num=num/1024
         self.comm_alo=comm_alo
         self.comm_scale=comm_scale
         self.ib=ib

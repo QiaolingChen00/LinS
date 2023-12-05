@@ -1,6 +1,9 @@
 from z3 import *
 from math import log2
 from comm import TransformerCommunication
+from utils import _get_model_config
+
+
 class Simulator:
     def __init__(self,config:dict) -> None:
         self._world_size=config["world_size"]
@@ -22,25 +25,7 @@ class Simulator:
 
         self._solver = Solver()
 
-    def _get_model_config(self):
-        if self._model_size==7:
-            self._h=4096
-            self._a=32
-            self._l=32
-        elif self._model_size==13:
-            self._h=5120
-            self._a=40
-            self._l=40
-        elif self._model_size==30:
-            self._h=6144
-            self._a=48
-            self._l=60
-        else: 
-            self._h=8192
-            self._a=64
-            self._l=80
 
-        return self._h,self._a,self._l
 
     def _set_memory_threshold(self):
 

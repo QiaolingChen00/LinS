@@ -17,7 +17,7 @@ class TransformerOverlap:
         comm=TransformerCommunication(self.b,self.s,self.h,self.num_layers,self.vocab_size,self.lins_scale,self.sp_scale).toal_comm
         comp=TransformerComputation(self.b,self.s,self.h,self.num_layers,self.vocab_size).comp
         print(f'comm:{comm},comp:{comp}')
-        return comm - comp if comm > comp else 0
+        return comm[0] - comp if comm[0] > comp else 0
 
 def main(args=None):
     overlap_res=TransformerOverlap(1,4096,4096,32,10000,64,8)
