@@ -12,7 +12,7 @@ class TransformerComputation:
         self.logits_computation=0
         self.attention_computation=0
         self.mlp_computation=0
-        self.total_computation(num_layers,vocab_size)
+        self.comp=self.total_computation(num_layers,vocab_size)
 
 
     def compute_attention_block(self):

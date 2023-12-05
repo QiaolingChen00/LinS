@@ -1,6 +1,6 @@
 from z3 import *
 from math import log2
-
+from comm import TransformerCommunication
 class Simulator:
     def __init__(self,config:dict) -> None:
         self._world_size=config["world_size"]
