@@ -1,84 +1,92 @@
 import pandas as pd
-import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+import joblib
+
 import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
-# 创建数据
-data = {
-    "Bandwidth_MB_s": [41.746, 62.982, 65.596, 101.968, 138.671, 159.773, 177.197, 190.415, 193.555, 194.056, 194.097,
-                       193.776, 193.419, 193.679, 194.425, 194.462, 36.732, 55.592, 80.364, 100.85, 116.875, 133.242,
-                       160.23, 178.519, 189.055, 193.55, 193.752, 193.717, 193.417, 193.686, 194.365, 194.416, 33.096,
-                       48.456, 72.221, 97.357, 113.762, 125.266, 134.315, 164.453, 178.744, 187.352, 192.915, 193.512,
-                       192.669, 193.47, 194.342, 194.218],
-    "Cards": [64] * 16 + [128] * 16 + [256] * 16,
-    "Data_MB": [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304,
-                8388608, 16777216] * 3
-}
+# 可视化每个分段的拟合结果
+plt.figure(figsize=(30, 20))
 
-# 转换为DataFrame
-df = pd.DataFrame(data)
+# Path to your Excel file
+excel_path = './comm.xlsx'
 
-# 可视化数据
-plt.figure(figsize=(12, 6))
-for card in df['Cards'].unique():
-    subset = df[df['Cards'] == card]
-    plt.scatter(subset['Data_MB'], subset['Bandwidth_MB_s'], label=f'{card} cards')
+# Read the Excel file
+xls = pd.ExcelFile(excel_path)
+ranks=[64,128,256,512]
+IBs=[1,2,4]
 
+
+models = {sheet_name: {rank: {ib: None for ib in IBs} for rank in ranks} for sheet_name in xls.sheet_names}
+
+# Iterate through each sheet
+for sheet_name in xls.sheet_names:
+    # Read sheet into DataFrame
+    df = pd.read_excel(excel_path, sheet_name=sheet_name)
+    
+    gpu64_IB1=df.iloc[0,1:]
+    gpu128_IB1=df.iloc[1,1:]
+    gpu256_IB1=df.iloc[2,1:]
+    gpu512_IB1=df.iloc[3,1:]
+
+    gpu64_IB2=df.iloc[6,1:]
+    gpu128_IB2=df.iloc[7,1:]
+    gpu256_IB2=df.iloc[8,1:]
+    gpu512_IB2=df.iloc[9,1:]
+
+    gpu64_IB4=df.iloc[12,1:]
+    gpu128_IB4=df.iloc[13,1:]
+    gpu256_IB4=df.iloc[14,1:]
+    gpu512_IB4=df.iloc[15,1:]
+
+    data={
+        'Data_MB':[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304,
+                8388608, 16777216],
+        '64_IB1': gpu64_IB1,
+        '128_IB1':gpu128_IB1,
+        '256_IB1':gpu256_IB1,
+        '512_IB1':gpu512_IB1,
+        '64_IB2': gpu64_IB2,
+        '128_IB2':gpu128_IB2,
+        '256_IB2':gpu256_IB2,
+        '512_IB2':gpu512_IB2,
+        '64_IB4': gpu64_IB4,
+        '128_IB4':gpu128_IB4,
+        '256_IB4':gpu256_IB4,
+        '512_IB4':gpu512_IB4,
+    }
+    for i in data:
+        if i == 'Data_MB': continue
+        import pdb;pdb.set_trace()
+        y=np.array(data[i])
+        X = np.array(data['Data_MB']).reshape(-1, 1)
+
+        poly_features = PolynomialFeatures(degree=3, include_bias=False)
+        X_poly = poly_features.fit_transform(X)
+
+        # 从之前的模型中获取预测值
+        model = LinearRegression().fit(X_poly, y)
+        y_pred = model.predict(X_poly)
+
+        models[sheet_name][i] = model
+
+        # 绘制散点图和拟合曲线
+        plt.scatter(X, y, label=f'alo: {sheet_name} & {i} ranks')
+        plt.plot(X, y_pred, label=f'alo: {sheet_name} & {i} ranks - Fit')
+
+    # Assuming the first column is the target variable and the rest are features
 plt.xlabel('Data Transferred (MB)')
-plt.ylabel('Effective Bandwidth (MB/s)')
-plt.title('Effective Bandwidth vs Data Transferred for Different Card Numbers')
-plt.legend()
+plt.ylabel('Latency (KB/s)')
+plt.title('Segmented Polynomial Regression Fit for Different Card Numbers')
 plt.xscale('log')
+plt.yscale('log')
+plt.legend()
 plt.grid(True)
 plt.show()
 
-# 显示前几行数据以验证
-df.head()
-
-# 准备多项式回归模型
-degree = 3  # 多项式的度数
-poly_features = PolynomialFeatures(degree=degree, include_bias=False)
-
-# 用于存储拟合结果和评分
-models = {}
-scores = {}
-
-# 分别对每个卡数的数据进行拟合
-for card in df['Cards'].unique():
-    subset = df[df['Cards'] == card]
-
-    # 准备数据
-    X = subset['Data_MB'].values.reshape(-1, 1)
-    y = subset['Bandwidth_MB_s'].values
-    X_poly = poly_features.fit_transform(X)
-
-    # 拟合模型
-    model = LinearRegression()
-    model.fit(X_poly, y)
-    y_pred = model.predict(X_poly)
-
-    # 评估模型
-    score = r2_score(y, y_pred)
-
-    # 存储模型和评分
-    models[card] = model
-    scores[card] = score
-
-    # 可视化拟合结果
-    plt.scatter(X, y, label=f'{card} cards')
-    plt.plot(X, y_pred, label=f'{card} cards Fit')
-
-# 绘制图表
-plt.xlabel('Data Transferred (MB)')
-plt.ylabel('Effective Bandwidth (MB/s)')
-plt.title('Polynomial Regression Fit for Different Card Numbers')
-plt.xscale('log')
-plt.legend()
-plt.grid(True)
-plt.show()
-
-# 输出评分
-scores
 

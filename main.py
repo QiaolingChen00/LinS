@@ -18,10 +18,10 @@ def _get_bs(global_bs,world_size,sequence_length):
 def main():
     """main function"""
     config = {
-        "world_size": 128,
+        "world_size": 64,
         "global_batch_size": 4096,
         "sequence_length": 16384,
-        "model_size":13,
+        "model_size":7,
         "grad_acc":1,
         "SP":4
     }
