@@ -25,8 +25,6 @@ class Simulator:
 
         self._solver = Solver()
 
-
-
     def _set_memory_threshold(self):
 
         self._h,self._a,self._l=self._get_model_config()
@@ -105,12 +103,10 @@ class Simulator:
     def run(self):
         self._build_constraint()
         self._build_optimize_object()
-   
         self._solver.push()
         min_cost = None
         while self._solver.check() == sat:
             model = self._solver.model()
-            
             current_cost = model[self._total_comm_cost].as_long()
             if min_cost is None or current_cost < min_cost:
                 min_cost = current_cost

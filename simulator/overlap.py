@@ -20,7 +20,7 @@ class TransformerOverlap:
         return comm[0] - comp if comm[0] > comp else 0
 
 def main(args=None):
-    overlap_res=TransformerOverlap(1,4096,4096,32,10000,64,8)
+    overlap_res=TransformerOverlap(1,32768,5120,40,10000,64,8)
     print(overlap_res)
 
 
