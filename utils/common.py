@@ -10,7 +10,7 @@ class CostType:
     ALL2ALL = "all2all"
     ALLREDUCE = "all_reduce"
     REDUCESCATTER = "reduce_scatter"
-    ALLGATHER = "all_gahter"
+    ALLGATHER = "all_gather"
     LINEAR = "linear"
 
 
@@ -139,13 +139,16 @@ def build_process_gourp(max_world_size):
 
         if dist.is_initialized():
             world_size = dist.get_world_size()
-            base_num = int(math.log2(world_size))
+            node_nums = world_size // 8
+            base_num = [2, 4, 6]
+            base_num = base_num + [8 * i for i in range(1, node_nums)]
+
             # if base_num <= 3:
             #     return
-            for i in range(1, base_num):
-                ranks = [j for j in range(2**i)]
+            for gpu_nums in base_num:
+                ranks = [j for j in range(gpu_nums)]
                 print(ranks, flush=True)
-                sub_process_groups[f"{2**i}"] = dist.new_group(ranks)
+                sub_process_groups[f"{gpu_nums}"] = dist.new_group(ranks)
                 # dist.get_process_group_ranks()
 
 

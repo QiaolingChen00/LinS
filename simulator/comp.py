@@ -25,9 +25,7 @@ class TransformerComputation:
         # Calculate Q, K, V
         # self.qkv_computation = 6 * self.b * self.s * self.h**2
         self.qkv_computation_one_linear = self.b * self.s * self.h**2
-        print(f"complexity: {self.qkv_computation_one_linear}", flush=True)
         self.qkv_computation_lat = self.dtype_c * 3 * self.get_linear_cost(self.qkv_computation_one_linear)
-        print(f"self.qkv_computation_lat : {self.qkv_computation_lat}", flush=True)
 
         # QK^T matrix multiplication
         # self.qkt_computation = 2 * self.b * self.s**2 * self.h
@@ -84,7 +82,6 @@ class TransformerComputation:
 
         # Total computation for all layers
         total_computation = self.num_layers * per_layer_computation + self.logits_computation
-        print(total_computation)
         return total_computation
 
 

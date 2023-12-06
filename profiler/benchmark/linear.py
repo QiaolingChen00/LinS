@@ -24,11 +24,12 @@ class UnitBenchLinear(UnitBench):
         self.q = torch.nn.Linear(
             hidden_dim, hidden_dim, bias=bias, device=f"cuda:{get_local_rank()}", dtype=dtype
         )  # (hidden_dim, hidden_dim)
+        self.dtype = self.q.element_size()
         self.x = torch.rand(1, seq_len, hidden_dim).to(self.q.weight)  # (bsz, seq_len, hidden_dim)
 
     def run(self):
         self.q(self.x)
 
     def complexity(self):
-        return self.seq_len * self.hidden_dim * self.hidden_dim
+        return self.dtype * self.seq_len * self.hidden_dim * self.hidden_dim
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

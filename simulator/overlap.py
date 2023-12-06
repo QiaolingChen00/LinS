@@ -1,8 +1,7 @@
 import pickle
 
-from simulator.comp import TransformerComputation
-
 from simulator.comm import TransformerCommunication
+from simulator.comp import TransformerComputation
 
 
 # 1. dtype 加入复杂度
@@ -27,9 +26,13 @@ class TransformerOverlap:
     def _get_overlap(self, lins_scale, sp_scale):
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
-        comm = TransformerCommunication(self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data).communication_isp(self.lins_scale, self.sp_scale)
-        comp = TransformerComputation(self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data).total_computation()
-        print(f"comm:{comm}, comp:{comp}")
+        comm = TransformerCommunication(
+            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
+        ).communication_isp(self.lins_scale, self.sp_scale)
+        comp = TransformerComputation(
+            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
+        ).total_computation()
+        # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0
         return max(comm, comp)
 
@@ -40,7 +43,7 @@ def main(args=None):
         cost_data = pickle.load(cost_data_path)
 
     overlap_res = TransformerOverlap(1, 4096, 4096, 32, 10000, 64, 8, cost_data=cost_data)
-    print(overlap_res._get_overlap())
+    # print(overlap_res._get_overlap())
 
 
 if __name__ == "__main__":

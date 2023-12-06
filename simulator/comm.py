@@ -22,15 +22,15 @@ class TransformerCommunication:
         return self.cost_data[comm_alo].predict(scale, volume)
 
     def allgather(self, volume, scale):
-        if scale <=1:
+        if scale <= 1:
             return 0
-        comm_alo = "all_gahter"
+        comm_alo = "all_gather"
         predict = self.get_comm_cost(comm_alo, scale, volume)
         # print(f"allgather:{predict}")
         return predict
 
     def reducescatter(self, volume, scale):
-        if scale <=1:
+        if scale <= 1:
             return 0
         comm_alo = "reduce_scatter"
         # predict = CommPredict(volume,comm_alo,scale).prediction
@@ -39,7 +39,7 @@ class TransformerCommunication:
         return predict
 
     def alltoall(self, volume, scale):
-        if scale <=1:
+        if scale <= 1:
             return 0
         comm_alo = "all2all"
         # predict = CommPredict(volume,comm_alo,scale).prediction

@@ -1,5 +1,5 @@
-import pickle
 import math
+import pickle
 from math import log2
 
 from z3 import *
@@ -12,9 +12,7 @@ from utils.common import *
 
 
 class Simulator:
-    def __init__(
-        self, config: dict, cost_data: dict = None, cost_data_path: str = None
-    ) -> None:
+    def __init__(self, config: dict, cost_data: dict = None, cost_data_path: str = None) -> None:
         self._world_size = config["world_size"]
         self._global_batch_size = config["global_batch_size"]
         self._sequence_length = config["sequence_length"]
@@ -24,7 +22,7 @@ class Simulator:
         self._micro_batch_size = config["micro_bs"]
         self._vocab_size = config["vocab_size"]
         self._dtype_size = 2
-        self._os_size_ratio = 2
+        self._os_size_ratio = 2 if self._dtype_size == 2 else 1
         self._p_size = self._model_size * 10**9
         print(config)
 
@@ -55,7 +53,11 @@ class Simulator:
         self._A = [[0 for _ in range(self._num_strategies)] for _ in range(3)]
         self._get_comm_cost()
         self._get_mem_cost()
-        print(f"MMMMM: self._X: {self._X}, self._C :{self._C }, self._A:{self._A}")
+
+        print(f"num_strategies: {self._num_strategies}")
+        print(f"self._X: {self._X}")
+        print(f"self._C: {self._C}")
+        print(f"self._A: {self._A}")
 
         self._solver = Solver()
 
@@ -68,6 +70,10 @@ class Simulator:
             self._h = 5120
             self._a = 40
             self._l = 40
+        elif self._model_size == 20:
+            self._h = 5120
+            self._a = 40
+            self._l = 60
         elif self._model_size == 30:
             self._h = 6144
             self._a = 48
@@ -89,42 +95,55 @@ class Simulator:
             / 10**9
             / self._SP
         )
-        print(f"self._activation：{self._activation }")
 
         self._memory_threshold = 80 - self._activation
         if self._memory_threshold < 0:
-            import pdb
-            pdb.set_trace()
-        print(f"micro_batch_size: {self._micro_batch_size}, activation: {self._activation}")
+            print(f"!!!warning!!!: self._memory_threshold: {self._memory_threshold} < 0")
+        print(f"activation: {self._activation:.4f} GB")
 
     def _lookup_comm_cost(self, type: CostType, world_size, complexity):
         return self.cost_data[type].predict(world_size, complexity)
 
-    def _comm_cost(self, i, j):
+    def _comm_cost(self, i: int, j: int) -> float:
+        """
+        Get communication cost.
+
+        Args:
+            i (int): p (i==0), g (i==1), os (i==2)
+            j (int): node count
+
+        Returns:
+            float: communication cost
+        """
         # self._SP_comm = self._get_sp_comm_cost(self._SP)
-        self._overlap_cost = self.overlap_res._get_overlap(j * 8 if j != 0 else 1, self._SP)
 
-        comm_cost = 0
-        if j == 0:
-            comm_cost = 0
-
-        world_size = j * 8
-        if i == 0:
-            comm_cost = self._get_p_comm_cost(world_size)
-        elif i == 1:
-            comm_cost = self._get_g_comm_cost(world_size)
+        if j != 0:
+            comm_range = j * 8
         else:
-            comm_cost = self._get_os_comm_cost(world_size)
+            comm_range = 1  # no comm cost
 
-        print(f"comm_cost : {comm_cost}, self._overlap_cost: {self._overlap_cost}", flush=True)
+        overlap_cost = self.overlap_res._get_overlap(comm_range, self._SP)
 
-        if comm_cost < 0:
-            import pdb
-            pdb.set_trace()
+        os_comm_cost = 0
+        if comm_range == 1:
+            os_comm_cost = 0
+        else:
+            # if i == 0:
+            #     comm_cost = self._get_p_comm_cost(world_size)
+            # elif i == 1:
+            #     comm_cost = self._get_g_comm_cost(world_size)
+            if i == 2:  # only consider OS comm cost.
+                os_comm_cost = self._get_os_comm_cost(comm_range)
+            else:
+                os_comm_cost = 0
 
-        comm_cost = comm_cost + self._overlap_cost
+        print(f"i:{i}, j:{j}, os comm cost: {os_comm_cost}, overlap_cost cost: {overlap_cost}")
+        if os_comm_cost < 0 or overlap_cost < 0:
+            raise ValueError
 
-        return comm_cost
+        comm_cost = os_comm_cost + overlap_cost
+
+        return comm_cost * 100
 
     def _mem_cost(self, i, j):
         if i == 0:
@@ -137,14 +156,14 @@ class Simulator:
             return self._dtype_size * self._model_size / (j * 8)
         else:
             if j == 0:
-                return self._dtype_size * 3 * self._model_size
+                return self._dtype_size * self._os_size_ratio * 3 * self._model_size
             return self._dtype_size * self._os_size_ratio * 3 * self._model_size / (j * 8)
 
     def _get_comm_cost(self):
         for i in range(3):
             for j in range(self._num_strategies):
                 if j != 1 and j % 2 != 0:
-                    self._C[i][j] = self._C[i][j-1] * 1.2
+                    self._C[i][j] = self._C[i][j - 1] * 1.2
                 else:
                     self._C[i][j] = self._comm_cost(i, j)
 
@@ -152,40 +171,15 @@ class Simulator:
         for i in range(3):
             for j in range(self._num_strategies):
                 if j != 1 and j % 2 != 0:
-                    self._A[i][j] = self._A[i][j-1] * 0.8
+                    self._A[i][j] = self._A[i][j - 1] * 0.8
                 else:
                     self._A[i][j] = self._mem_cost(i, j)
-                    print(f"MMMMM: i: {i}, j:{j}, self._A[i][j]:{self._A[i][j]}")
-
-    def _get_sp_comm_cost(self, comm_range):
-        # if self._SP==1:
-        #     return 0
-        # dis=[1,0.9,0.8,0.6,0.1]
-        # sp_comm_cost=_SP_comm_num/dis[int(log2(self._SP))]
-        if comm_range <= 1:
-            return 0
-        comm_cost = (
-            self._dtype_size * 4 * self._micro_batch_size * self._h * self._sequence_length / 1024 / 1024 / self._SP
-        )
-        return self._lookup_comm_cost(CostType.ALL2ALL, comm_range, comm_cost)
 
     def _get_os_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
-        comm_cost = self._dtype_size * self._p_size  / 32
-        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
-
-    def _get_g_comm_cost(self, comm_range):
-        if comm_range <= 1:
-            return 0
-        comm_cost = self._dtype_size * self._p_size * self._grad_acc  / 32
-        return self._lookup_comm_cost(CostType.REDUCESCATTER, comm_range, comm_cost)
-
-    def _get_p_comm_cost(self, comm_range):
-        if comm_range <= 1:
-            return 0
-        comm_cost = 2 * self._dtype_size * self._p_size / 32
-        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
+        comm_cost = self._dtype_size * self._p_size
+        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)  # TODO: Should be broadcast
 
     def _strategy_constraint_strict(self):
         for i in range(3):
@@ -206,7 +200,7 @@ class Simulator:
         self._memory_constraint_strict()
 
     def _build_optimize_object(self):
-        self._total_comm_cost = Int("total_comm_cost")
+        self._total_comm_cost = Real("total_comm_cost")
         self._communication_cost_expr = Sum(
             [self._C[i][j] * If(self._X[i][j], 1, 0) for i in range(3) for j in range(self._num_strategies)]
         )
@@ -221,7 +215,8 @@ class Simulator:
         while self._solver.check() == sat:
             model = self._solver.model()
 
-            current_cost = model[self._total_comm_cost].as_long()
+            # current_cost = model[self._total_comm_cost].as_long()
+            current_cost = model[self._total_comm_cost].as_fraction()
             if min_cost is None or current_cost < min_cost:
                 min_cost = current_cost
                 solution = [[model.evaluate(self._X[i][j]) for j in range(self._num_strategies)] for i in range(3)]
@@ -232,3 +227,23 @@ class Simulator:
             print("Solution:", solution)
         else:
             print("No solution found")
+
+    # def _get_g_comm_cost(self, comm_range): # discard: already count in _get_overlap
+    #     if comm_range <= 1:
+    #         return 0
+    #     comm_cost = self._dtype_size * self._p_size * self._grad_acc
+    #     return self._lookup_comm_cost(CostType.REDUCESCATTER, comm_range, comm_cost)
+
+    # def _get_p_comm_cost(self, comm_range): # discard: already count in _get_overlap
+    #     if comm_range <= 1:
+    #         return 0
+    #     comm_cost = 2 * self._dtype_size * self._p_size # bwd + fwd
+    #     return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
+
+    # def _get_sp_comm_cost(self, comm_range):    # discard: already count in _get_overlap
+    #     if comm_range <= 1:
+    #         return 0
+    #     comm_cost = (
+    #         self._dtype_size * 4 * self._micro_batch_size * self._h * self._sequence_length / 1024 / 1024 / self._SP
+    #     )
+    #     return self._lookup_comm_cost(CostType.ALL2ALL, comm_range, comm_cost)

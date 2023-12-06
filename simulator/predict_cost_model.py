@@ -121,6 +121,7 @@ class PolynomialModel:
             return Y_pred
         except Exception:
             import pdb
+
             pdb.set_trace()
 
     def profile(self):
