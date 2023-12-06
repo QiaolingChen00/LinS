@@ -1,13 +1,10 @@
-
-
-
-
 import torch
 import torch.distributed as dist
 
-from .base_benchmark import UnitBench
 from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import *
+
+from .base_benchmark import UnitBench
 
 BENCH_TYPE = "all_reduce"
 
@@ -15,8 +12,8 @@ BENCH_TYPE = "all_reduce"
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitBenchAllReduce(UnitBench):
     test_loop = {
-        "global_size": [512*KB, 1*MB, 4*MB, 64*MB, 128*MB, 256*MB, 512*MB],
-        "world_size": [8, 16, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
+        "global_size": [512 * KB, 1 * MB, 4 * MB, 64 * MB, 128 * MB, 256 * MB, 512 * MB],
+        "world_size": [2, 4, 8, 16, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
         "async_op": [False],  # it is not work!! False,
         "dtype": [torch.bfloat16],
     }

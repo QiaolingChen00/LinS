@@ -1,10 +1,9 @@
 import torch
-from .base_benchmark import UnitBench
+
 from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import *
 
-
-
+from .base_benchmark import UnitBench
 
 BENCH_TYPE = "linear"
 
@@ -33,5 +32,3 @@ class UnitBenchLinear(UnitBench):
     def complexity(self):
         return self.seq_len * self.hidden_dim * self.hidden_dim
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"
-
-

@@ -1,9 +1,10 @@
 import torch
 import torch.distributed as dist
 
-from .base_benchmark import UnitBench
 from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import *
+
+from .base_benchmark import UnitBench
 
 BENCH_TYPE = "all_gahter"
 
@@ -11,8 +12,8 @@ BENCH_TYPE = "all_gahter"
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitBenchAllGather(UnitBench):
     test_loop = {
-        "global_size": [512*KB, 1*MB, 4*MB, 64*MB, 128*MB, 256*MB, 512*MB],
-        "world_size": [8, 16, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
+        "global_size": [512 * KB, 1 * MB, 4 * MB, 64 * MB, 128 * MB, 256 * MB, 512 * MB],
+        "world_size": [2, 4, 8, 16, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
         "async_op": [False],  # it is not work!! False,
         "dtype": [torch.bfloat16],
     }
@@ -20,7 +21,7 @@ class UnitBenchAllGather(UnitBench):
     def __init__(self, world_size, async_op, dtype, global_size=None, unit_size=None) -> None:
         assert global_size is None or unit_size is None
 
-        self.unit_size = unit_size if unit_size else global_size//world_size    # elements_per_gpu
+        self.unit_size = unit_size if unit_size else global_size // world_size  # elements_per_gpu
         self.world_size = world_size
         self.dtype = dtype
         self.async_op = async_op

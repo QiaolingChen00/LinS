@@ -4,4 +4,3 @@ class UnitBench:
 
     def complexity(self):
         raise NotImplementedError
-

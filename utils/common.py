@@ -5,6 +5,19 @@ import torch
 import torch.distributed as dist
 from torch.distributed import GroupMember
 
+
+class CostType:
+    ALL2ALL = "all2all"
+    ALLREDUCE = "all_reduce"
+    REDUCESCATTER = "reduce_scatter"
+    ALLGATHER = "all_gahter"
+    LINEAR = "linear"
+
+
+BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
+
+# BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
+
 K = 1024
 
 KB = 1024
@@ -127,9 +140,9 @@ def build_process_gourp(max_world_size):
         if dist.is_initialized():
             world_size = dist.get_world_size()
             base_num = int(math.log2(world_size))
-            if base_num <= 3:
-                return
-            for i in range(3, base_num):
+            # if base_num <= 3:
+            #     return
+            for i in range(1, base_num):
                 ranks = [j for j in range(2**i)]
                 print(ranks, flush=True)
                 sub_process_groups[f"{2**i}"] = dist.new_group(ranks)
