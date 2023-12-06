@@ -1,7 +1,10 @@
 import pickle
+import math
 from math import log2
 
 from z3 import *
+
+from simulator.overlap import TransformerOverlap
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
@@ -10,7 +13,7 @@ from utils.common import *
 
 class Simulator:
     def __init__(
-        self, config: dict, cost_data: dict = None, cost_data_path: str = None, is_master: bool = True
+        self, config: dict, cost_data: dict = None, cost_data_path: str = None
     ) -> None:
         self._world_size = config["world_size"]
         self._global_batch_size = config["global_batch_size"]
@@ -19,8 +22,10 @@ class Simulator:
         self._grad_acc = config["grad_acc"]
         self._SP = config["SP"]
         self._micro_batch_size = config["micro_bs"]
+        self._vocab_size = config["vocab_size"]
         self._dtype_size = 2
         self._os_size_ratio = 2
+        self._p_size = self._model_size * 10**9
         print(config)
 
         if cost_data is None:
@@ -32,6 +37,17 @@ class Simulator:
         else:
             self.cost_data = cost_data
 
+        self._h, self._a, self._l = self._get_model_config()
+        self.overlap_res = TransformerOverlap(
+            b=self._dtype_size,
+            s=self._sequence_length,
+            h=self._h,
+            # a=self._a,
+            num_layers=self._l,
+            vocab_size=self._vocab_size,
+            cost_data=self.cost_data,
+        )
+
         self._set_memory_threshold()
         self._num_strategies = int(log2(self._world_size / 8)) + 2
         self._X = [[Bool(f"X_{i}_{j}") for j in range(self._num_strategies)] for i in range(3)]
@@ -39,6 +55,7 @@ class Simulator:
         self._A = [[0 for _ in range(self._num_strategies)] for _ in range(3)]
         self._get_comm_cost()
         self._get_mem_cost()
+        print(f"MMMMM: self._X: {self._X}, self._C :{self._C }, self._A:{self._A}")
 
         self._solver = Solver()
 
@@ -63,8 +80,6 @@ class Simulator:
         return self._h, self._a, self._l
 
     def _set_memory_threshold(self):
-
-        self._h, self._a, self._l = self._get_model_config()
         self._activation = (
             self._dtype_size
             * self._micro_batch_size
@@ -74,26 +89,40 @@ class Simulator:
             / 10**9
             / self._SP
         )
+        print(f"self._activation：{self._activation }")
 
         self._memory_threshold = 80 - self._activation
-        print(f"micro_batch_size{self._micro_batch_size},activation{self._activation}")
+        if self._memory_threshold < 0:
+            import pdb
+            pdb.set_trace()
+        print(f"micro_batch_size: {self._micro_batch_size}, activation: {self._activation}")
 
     def _lookup_comm_cost(self, type: CostType, world_size, complexity):
         return self.cost_data[type].predict(world_size, complexity)
 
     def _comm_cost(self, i, j):
-        self._SP_comm = self._get_sp_comm_cost(self._SP)
+        # self._SP_comm = self._get_sp_comm_cost(self._SP)
+        self._overlap_cost = self.overlap_res._get_overlap(j * 8 if j != 0 else 1, self._SP)
+
         comm_cost = 0
         if j == 0:
             comm_cost = 0
-        if i == 0:
-            comm_cost = self._get_p_comm_cost(j)
-        elif i == 1:
-            comm_cost = self._get_g_comm_cost(j)
-        else:
-            comm_cost = self._get_os_comm_cost(j)
 
-        comm_cost = comm_cost + self._SP_comm
+        world_size = j * 8
+        if i == 0:
+            comm_cost = self._get_p_comm_cost(world_size)
+        elif i == 1:
+            comm_cost = self._get_g_comm_cost(world_size)
+        else:
+            comm_cost = self._get_os_comm_cost(world_size)
+
+        print(f"comm_cost : {comm_cost}, self._overlap_cost: {self._overlap_cost}", flush=True)
+
+        if comm_cost < 0:
+            import pdb
+            pdb.set_trace()
+
+        comm_cost = comm_cost + self._overlap_cost
 
         return comm_cost
 
@@ -114,12 +143,19 @@ class Simulator:
     def _get_comm_cost(self):
         for i in range(3):
             for j in range(self._num_strategies):
-                self._C[i][j] = self._comm_cost(i, j)
+                if j != 1 and j % 2 != 0:
+                    self._C[i][j] = self._C[i][j-1] * 1.2
+                else:
+                    self._C[i][j] = self._comm_cost(i, j)
 
     def _get_mem_cost(self):
         for i in range(3):
             for j in range(self._num_strategies):
-                self._A[i][j] = self._mem_cost(i, j)
+                if j != 1 and j % 2 != 0:
+                    self._A[i][j] = self._A[i][j-1] * 0.8
+                else:
+                    self._A[i][j] = self._mem_cost(i, j)
+                    print(f"MMMMM: i: {i}, j:{j}, self._A[i][j]:{self._A[i][j]}")
 
     def _get_sp_comm_cost(self, comm_range):
         # if self._SP==1:
@@ -136,20 +172,20 @@ class Simulator:
     def _get_os_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
-        comm_cost = self._dtype_size * self._model_size
-        return self._lookup_comm_cost(CostType.ALLREDUCE, comm_range, comm_cost)
+        comm_cost = self._dtype_size * self._p_size  / 32
+        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
 
     def _get_g_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
-        comm_cost = self._dtype_size * self._model_size * self._grad_acc
-        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
+        comm_cost = self._dtype_size * self._p_size * self._grad_acc  / 32
+        return self._lookup_comm_cost(CostType.REDUCESCATTER, comm_range, comm_cost)
 
     def _get_p_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
-        comm_cost = 2 * self._dtype_size * self._model_size
-        return self._lookup_comm_cost(CostType.REDUCESCATTER, comm_range, comm_cost)
+        comm_cost = 2 * self._dtype_size * self._p_size / 32
+        return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)
 
     def _strategy_constraint_strict(self):
         for i in range(3):

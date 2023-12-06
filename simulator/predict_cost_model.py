@@ -1,16 +1,14 @@
+import os
+import pickle
 from collections import OrderedDict
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pickle
-import os
-
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
-from utils.common import *
 import profiler.benchmark
 from profiler.profiler import (
     print_bench_reulsts,
@@ -20,7 +18,6 @@ from profiler.profiler import (
 from utils.common import *
 from utils.config import Config
 
-from collections import OrderedDict
 
 class PolynomialModel:
     def __init__(self, degree, data, name="unkonw", segments=None) -> None:
@@ -36,7 +33,7 @@ class PolynomialModel:
         self.poly_features = PolynomialFeatures(degree=degree, include_bias=False)  # 准备多项式回归模型
         self.data = pd.DataFrame(data)  # 转换为DataFrame
         if segments is None:
-            segments = {"all": (0,  float('inf'))}
+            segments = {"all": (0, float("inf"))}
         print(segments, flush=True)
         self.segments = OrderedDict(segments)
         self.segment_scores = {seg: {} for seg in self.segments}  # 用于存储拟合结果和评分
@@ -114,8 +111,9 @@ class PolynomialModel:
         assert ValueError, f"predict value:{x} out of range"
 
     def predict(self, world_size, complexity):
-        if world_size % 2 != 0:
+        if world_size != 1 and world_size % 2 != 0:
             return 999999
+
         try:
             model = self.model_fit[self.return_segments(complexity)][world_size]
             X_pred = self.poly_features.fit_transform([[complexity]])
@@ -127,18 +125,17 @@ class PolynomialModel:
 
     def profile(self):
         pass
-    
 
 
 class CostModel:
     def __init__(self, is_master) -> None:
         self._master = is_master
         self._profile_args = Config(
-                {
-                    "trials": 10,
-                    "warmups": 5,
-                }
-            )
+            {
+                "trials": 10,
+                "warmups": 5,
+            }
+        )
         self.cost_data = None
         self._data_prefix = "./data"
 
@@ -155,7 +152,7 @@ class CostModel:
                 dump_file = self._dump_cost_file(bench_type)
                 with open(dump_file, "wb") as f:
                     pickle.dump(data, f)
-    
+
     def dump_all_data(self):
         dump_file = f"{self._data_prefix}/cost_data.pickle"
         with open(dump_file, "wb") as f:

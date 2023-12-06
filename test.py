@@ -1,65 +1,35 @@
-import os
+from simulator.comp import TransformerComputation
+from simulator.comm import TransformerCommunication
 import pickle
 
-import torch.distributed as dist
+class TransformerOverlap:
+    def __init__(self, b, s, h,num_layers,vocab_size,lins_scale,sp_scale, cost_data=None):
+        self.b = b  # Batch size
+        self.s = s  # Sequence length
+        self.h = h  # Hidden size
+        self.num_layers=num_layers
+        self.vocab_size=vocab_size
+        self.lins_scale=lins_scale
+        self.sp_scale=sp_scale
 
-import profiler.benchmark
-from cost_model import PolynomialModel
-from profiler.profiler import (
-    print_bench_reulsts,
-    reformat_data_to_cost_model,
-    run_profile,
-)
-from utils.common import *
-from utils.config import Config
+        self.cost_data = cost_data
+        assert cost_data is not None
+        self.overlap=self._get_overlap()
 
-bench_type_list = ["linear", "all_reduce", "all_gahter", "all2all", "reduce_scatter"]
+    def _get_overlap(self):
+        comm=TransformerCommunication(self.b,self.s,self.h,self.num_layers,self.vocab_size,self.lins_scale,self.sp_scale, cost_data=self.cost_data).toal_comm
+        comp=TransformerComputation(self.b,self.s,self.h,self.num_layers,self.vocab_size, cost_data=self.cost_data).comp
+        print(f'comm:{comm}, comp:{comp}')
+        return comm[0] - comp if comm[0] > comp else 0
 
+def main(args=None):
+    cost_data_path = "/mnt/petrelfs/wangguoteng.p/ds_comm_bench/LinS/data/cost_data.pickle"
+    with open(cost_data_path, 'rb') as f:
+        cost_data = pickle.load(f)
 
-# if __name__ == "__main__":
-#     total_results = {
-#         '32' : {
-#             '1': [{'lat' : 0.01}],
-#             '2': [{'lat' : 0.02}],
-#             '3': [{'lat' : 0.03}],
-#         },
-#         '16' : {
-#             '1': [{'lat' : 0.01}],
-#             '2': [{'lat' : 0.02}],
-#             '3': [{'lat' : 0.03}],
-#         }
-#     }
-#     print(reformat_data_to_cost_model(total_results))
+    overlap_res=TransformerOverlap(1,4096,4096,32,10000,64,8, cost_data=cost_data)
+    print(overlap_res.overlap)
 
 
 if __name__ == "__main__":
-
-    args = Config(
-        {
-            "trials": 10,
-            "warmups": 5,
-        }
-    )
-
-    build_process_gourp(64)
-
-    for BENCH_TYPE in bench_type_list:
-        if get_global_rank() == 0:
-            print(f"now test {BENCH_TYPE}", flush=True)
-        dump_file = f"./data/dump_data_{BENCH_TYPE}.pickle"
-
-        if not os.path.exists(dump_file):
-            re_results = run_profile(args, BENCH_TYPE)
-            print_bench_reulsts(re_results)
-            data = reformat_data_to_cost_model(re_results)
-            if get_global_rank() == 0:
-                with open(dump_file, "wb") as f:
-                    pickle.dump(data, f)
-        else:
-            with open(dump_file, "rb") as f:
-                data = pickle.load(f)
-
-        if get_global_rank() == 0:
-            print(data)
-            linear_model = PolynomialModel(degree=2, data=data, name=f"./data/{BENCH_TYPE}")
-            linear_model.build_model()
+    main()
