@@ -1,8 +1,9 @@
 class TransformerComputation:
-    def __init__(self, b, s, h, num_layers, vocab_size, cost_data=None):
+    def __init__(self, b, s, h, num_layers, vocab_size,sp_scale,cost_data=None):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
+        self.sp_scale =sp_scale
         self.qkv_computation = 0
         self.qkt_computation = 0
         self.score_v_computation = 0
@@ -25,12 +26,12 @@ class TransformerComputation:
     def compute_attention_block(self):
         # Calculate Q, K, V
         # self.qkv_computation = 6 * self.b * self.s * self.h**2
-        self.qkv_computation_one_linear = self.b * self.s * self.h**2
+        self.qkv_computation_one_linear = self.b * self.s * self.h**2/self.sp_scale
         self.qkv_computation_lat = self.dtype_c * 3 * self.get_linear_cost(self.qkv_computation_one_linear)
 
         # QK^T matrix multiplication
         # self.qkt_computation = 2 * self.b * self.s**2 * self.h
-        self.qkt_computation_one_linear = self.b * self.s**2 * self.h
+        self.qkt_computation_one_linear = self.b * self.s**2 * self.h/self.sp_scale
         # TODO, make dtype_c as input key
         self.qkt_computation_lat = self.dtype_c * self.get_linear_cost(self.qkt_computation_one_linear)
 
@@ -40,7 +41,7 @@ class TransformerComputation:
 
         # Linear mapping after attention
         # self.post_attention_linear = 2 * self.b * self.s * self.h**2
-        self.post_attention_linear_one_linear = self.b * self.s * self.h**2
+        self.post_attention_linear_one_linear = self.b * self.s * self.h**2/self.sp_scale
         self.post_attention_linear_lat = self.dtype_c * self.get_linear_cost(self.post_attention_linear_one_linear)
 
         # Total computation for attention block
@@ -57,7 +58,7 @@ class TransformerComputation:
 
     def compute_mlp_block(self):
         # First linear layer
-        self.first_linear = 4 * self.b * self.s * self.h**2
+        self.first_linear = 4 * self.b * self.s * self.h**2/self.sp_scale
         self.first_linear_lat = self.dtype_c * self.get_linear_cost(self.first_linear)
 
         # Second linear layer

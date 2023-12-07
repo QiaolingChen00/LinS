@@ -30,7 +30,7 @@ class TransformerOverlap:
             self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
         ).communication_isp(self.lins_scale, self.sp_scale)
         comp_wp,comp_attn = TransformerComputation(
-            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
+            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data,sp_scale=self.sp_scale
         ).total_computation()
         # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0
