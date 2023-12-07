@@ -28,6 +28,7 @@ def main():
         "micro_bs": 1,
         "grad_acc": 1,
         "vocab_size": 103168,
+
     }
 
     cost_data_path = "/Users/chenqiaoling/Desktop/blog/codes/LinS/data/cost_data.pickle"
@@ -50,6 +51,7 @@ def main():
             print(f'\nSP={sp}')
             simulator = Simulator(config, cost_data_path=cost_data_path)
             simulator.run()
+
 
 
 

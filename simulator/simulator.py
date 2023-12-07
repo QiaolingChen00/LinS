@@ -1,7 +1,6 @@
 import math
 import pickle
 from math import log2
-
 from z3 import *
 
 from simulator.overlap import TransformerOverlap
@@ -9,6 +8,7 @@ from simulator.overlap import TransformerOverlap
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
 from utils.common import *
+
 
 
 class Simulator:
@@ -53,6 +53,9 @@ class Simulator:
         self._A = [[0 for _ in range(self._num_strategies)] for _ in range(3)]
         self._get_comm_cost()
         self._get_mem_cost()
+        print(f'self._X{self._X}')
+        print(f'self._C{self._C}')
+        print(f'self._A{self._A}')
 
 
         self._solver = Solver()
@@ -92,6 +95,7 @@ class Simulator:
             / self._SP
         )
 
+
         self._memory_threshold = 80 - self._activation
         if self._memory_threshold < 0:
             print(f"!!!warning!!!: self._memory_threshold: {self._memory_threshold} < 0")
@@ -117,6 +121,7 @@ class Simulator:
             comm_range = j * 8
         else:
             comm_range = 1  # no comm cost
+
 
         overlap_cost = self.overlap_res._get_overlap(comm_range, self._SP)
 
@@ -206,12 +211,10 @@ class Simulator:
     def run(self):
         self._build_constraint()
         self._build_optimize_object()
-
         self._solver.push()
         min_cost = None
         while self._solver.check() == sat:
             model = self._solver.model()
-
             # current_cost = model[self._total_comm_cost].as_long()
             current_cost_str = model[self._total_comm_cost].as_decimal(10)
             current_cost_str = current_cost_str.rstrip('?')
