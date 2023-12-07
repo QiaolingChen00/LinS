@@ -21,7 +21,7 @@ def main():
     config = {
         "world_size": 128,
         "global_batch_size": 4096,
-        "sequence_length": 8192,
+        "sequence_length": 16384,
         "model_size": 30,
         "grad_acc": 1,
         "SP": 4,

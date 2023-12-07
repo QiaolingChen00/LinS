@@ -35,8 +35,6 @@
 pattern of Using MTP, MSP, FSP
 
 
-
-
 #### Comm model
 
 1. 通信扩展因子 todo？
@@ -111,3 +109,7 @@ IF SP>8: TODO
 [T_{\text{Overlap}}=\sum(\max(T_\text{Comm,i}),T_\text{Comp,i})\]
 
 
+# TODO  12.7
+
++ PP
++ activation Checkpoint

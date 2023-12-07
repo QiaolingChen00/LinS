@@ -94,8 +94,6 @@ class Simulator:
             / 10**9
             / self._SP
         )
-
-
         self._memory_threshold = 80 - self._activation
         if self._memory_threshold < 0:
             print(f"!!!warning!!!: self._memory_threshold: {self._memory_threshold} < 0")
