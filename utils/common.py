@@ -10,7 +10,7 @@ class CostType:
     ALL2ALL = "all2all"
     ALLREDUCE = "all_reduce"
     REDUCESCATTER = "reduce_scatter"
-    ALLGATHER = "all_gather"
+    ALLGATHER = "all_gahter"
     LINEAR = "linear"
 
 

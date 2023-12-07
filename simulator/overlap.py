@@ -26,15 +26,16 @@ class TransformerOverlap:
     def _get_overlap(self, lins_scale, sp_scale):
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
-        comm = TransformerCommunication(
+        comm_wp,comm_sp = TransformerCommunication(
             self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
         ).communication_isp(self.lins_scale, self.sp_scale)
-        comp = TransformerComputation(
+        comp_wp,comp_attn = TransformerComputation(
             self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
         ).total_computation()
         # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0
-        return max(comm, comp)
+        print(f"comm_wp:{comm_wp},comm_sp:{comm_sp},comp_wp:{comp_wp}, comp_attn:{comp_attn}")
+        return max(comm_wp, comp_wp)+comm_sp+comp_attn
 
 
 def main(args=None):

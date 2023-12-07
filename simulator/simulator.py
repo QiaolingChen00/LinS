@@ -137,7 +137,6 @@ class Simulator:
             else:
                 os_comm_cost = 0
 
-        print(f"i:{i}, j:{j}, os comm cost: {os_comm_cost}, overlap_cost cost: {overlap_cost}")
         if os_comm_cost < 0 or overlap_cost < 0:
             raise ValueError
 

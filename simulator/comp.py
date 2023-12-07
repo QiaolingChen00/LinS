@@ -11,6 +11,7 @@ class TransformerComputation:
         self.second_linear = 0
         self.logits_computation = 0
         self.attention_computation = 0
+        self.flash_attention_computation=0
         self.mlp_computation = 0
         self.cost_data = cost_data
         self.dtype_c = 1  # bfloat16
@@ -46,11 +47,13 @@ class TransformerComputation:
         # total_attention_computation = self.qkv_computation + self.qkt_computation + self.score_v_computation + self.post_attention_linear
         total_attention_computation_lat = (
             self.qkv_computation_lat
-            + self.qkt_computation_lat
-            + self.score_v_computation_lat
             + self.post_attention_linear_lat
         )
-        return total_attention_computation_lat
+
+        total_flash_attentino_computation_lat=(
+             self.qkt_computation_lat
+            + self.score_v_computation_lat)
+        return total_attention_computation_lat,total_flash_attentino_computation_lat
 
     def compute_mlp_block(self):
         # First linear layer
@@ -73,16 +76,18 @@ class TransformerComputation:
 
     def total_computation(self):
         # Compute total for each block
-        self.attention_computation = self.compute_attention_block()
+        self.attention_computation,self.flash_attention_computation = self.compute_attention_block()
         self.mlp_computation = self.compute_mlp_block()
         self.logits_computation = self.compute_logits()
 
         # Total computation for one transformer layer
         per_layer_computation = self.attention_computation + self.mlp_computation
+        
 
         # Total computation for all layers
         total_computation = self.num_layers * per_layer_computation + self.logits_computation
-        return total_computation
+        total_flash_computation=self.num_layers * self.flash_attention_computation
+        return total_computation,total_flash_computation
 
 
 # Example usage

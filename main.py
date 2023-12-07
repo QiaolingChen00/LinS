@@ -21,16 +21,16 @@ def main():
     config = {
         "world_size": 64,
         "global_batch_size": 4096,
-        "sequence_length": 4096,
+        "sequence_length": 16384,
         "model_size": 7,
         "grad_acc": 1,
-        "SP": 1,
+        "SP": 4,
         "micro_bs": 1,
         "grad_acc": 1,
         "vocab_size": 103168,
     }
 
-    cost_data_path = "/mnt/petrelfs/wangguoteng.p/ds_comm_bench/LinS/data/cost_data.pickle"
+    cost_data_path = "/Users/chenqiaoling/Desktop/blog/codes/LinS/data/cost_data.pickle"
     # world_size = 64
     # for sp in [2,4,8,16]:
     #     for model_size in [7]:

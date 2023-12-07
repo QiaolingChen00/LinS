@@ -24,7 +24,7 @@ class TransformerCommunication:
     def allgather(self, volume, scale):
         if scale <= 1:
             return 0
-        comm_alo = "all_gather"
+        comm_alo = "all_gahter"
         predict = self.get_comm_cost(comm_alo, scale, volume)
         # print(f"allgather:{predict}")
         return predict
@@ -83,9 +83,9 @@ class TransformerCommunication:
         )
 
         return 16 * (
-            self.attention_all_to_all_communication_latency
-            + self.first_linear_communication_latency
+           self.first_linear_communication_latency
             + self.second_linear_communication_latency
             + self.qkv_communication_latency
             + self.post_attention_communication_latency
-        )
+        ),16* self.attention_all_to_all_communication_latency
+            
