@@ -22,7 +22,7 @@ def main():
         "world_size": 128,
         "global_batch_size": 4096,
         "sequence_length": 16384,
-        "model_size": 30,
+        "model_size": 65,
         "grad_acc": 1,
         "SP": 4,
         "micro_bs": 1,

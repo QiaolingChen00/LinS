@@ -87,7 +87,7 @@ class TransformerComputation:
         # Total computation for all layers
         total_computation = self.num_layers * per_layer_computation + self.logits_computation
         total_flash_computation=self.num_layers * self.flash_attention_computation
-        return total_computation,total_flash_computation
+        return 3*total_computation,3*total_flash_computation
 
 
 # Example usage
