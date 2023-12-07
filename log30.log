@@ -1,0 +1,36 @@
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 2, 'micro_bs': 1, 'vocab_size': 103168}
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 2, 'micro_bs': 1, 'vocab_size': 103168}
+activation: 67.8471 GB
+num_strategies: 6
+self._X: [[X_0_0, X_0_1, X_0_2, X_0_3, X_0_4, X_0_5], [X_1_0, X_1_1, X_1_2, X_1_3, X_1_4, X_1_5], [X_2_0, X_2_1, X_2_2, X_2_3, X_2_4, X_2_5]]
+self._C: [[906.4509606665212, 699.4520768169233, 1180.6065823608449, 1416.7278988330138, 1506.6666673192346, 1808.0000007830815], [906.4509606665212, 699.4520768169233, 1180.6065823608449, 1416.7278988330138, 1506.6666673192346, 1808.0000007830815], [906.4509606665212, 699.4520768169233, 1180.6065823608449, 1416.7278988330138, 1506.6666673192346, 1808.0000007830815]]
+self._A: [[60, 7.5, 3.75, 3.0, 1.875, 1.5], [60, 7.5, 3.75, 3.0, 1.875, 1.5], [360, 45.0, 22.5, 18.0, 11.25, 9.0]]
+Minimum Communication Cost: 10848000004698489/2000000000000
+Solution: [[False, False, False, False, False, True], [False, False, False, False, False, True], [False, False, False, False, False, True]]
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 4, 'micro_bs': 1, 'vocab_size': 103168}
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 4, 'micro_bs': 1, 'vocab_size': 103168}
+activation: 33.9235 GB
+num_strategies: 6
+self._X: [[X_0_0, X_0_1, X_0_2, X_0_3, X_0_4, X_0_5], [X_1_0, X_1_1, X_1_2, X_1_3, X_1_4, X_1_5], [X_2_0, X_2_1, X_2_2, X_2_3, X_2_4, X_2_5]]
+self._C: [[911.5032075565734, 704.5043237069756, 1185.6588292508973, 1422.7905951010766, 1511.7189142092868, 1814.0626970511441], [911.5032075565734, 704.5043237069756, 1185.6588292508973, 1422.7905951010766, 1511.7189142092868, 1814.0626970511441], [911.5032075565734, 704.5043237069756, 1185.6588292508973, 1422.7905951010766, 1511.7189142092868, 1814.0626970511441]]
+self._A: [[60, 7.5, 3.75, 3.0, 1.875, 1.5], [60, 7.5, 3.75, 3.0, 1.875, 1.5], [360, 45.0, 22.5, 18.0, 11.25, 9.0]]
+Minimum Communication Cost: 5189334953329697/2000000000000
+Solution: [[False, True, False, False, False, False], [False, True, False, False, False, False], [False, False, True, False, False, False]]
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 8, 'micro_bs': 1, 'vocab_size': 103168}
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 8, 'micro_bs': 1, 'vocab_size': 103168}
+activation: 16.9618 GB
+num_strategies: 6
+self._X: [[X_0_0, X_0_1, X_0_2, X_0_3, X_0_4, X_0_5], [X_1_0, X_1_1, X_1_2, X_1_3, X_1_4, X_1_5], [X_2_0, X_2_1, X_2_2, X_2_3, X_2_4, X_2_5]]
+self._C: [[914.7572205908372, 707.7583367412393, 1188.9128422851609, 1426.695410742193, 1514.9729272435507, 1817.9675126922607], [914.7572205908372, 707.7583367412393, 1188.9128422851609, 1426.695410742193, 1514.9729272435507, 1817.9675126922607], [914.7572205908372, 707.7583367412393, 1188.9128422851609, 1426.695410742193, 1514.9729272435507, 1817.9675126922607]]
+self._A: [[60, 7.5, 3.75, 3.0, 1.875, 1.5], [60, 7.5, 3.75, 3.0, 1.875, 1.5], [360, 45.0, 22.5, 18.0, 11.25, 9.0]]
+Minimum Communication Cost: 21232750102237179/10000000000000
+Solution: [[False, True, False, False, False, False], [False, True, False, False, False, False], [False, True, False, False, False, False]]
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 16, 'micro_bs': 1, 'vocab_size': 103168}
+{'world_size': 128, 'global_batch_size': 4096, 'sequence_length': 16384, 'model_size': 30, 'grad_acc': 1, 'SP': 16, 'micro_bs': 1, 'vocab_size': 103168}
+activation: 8.4809 GB
+num_strategies: 6
+self._X: [[X_0_0, X_0_1, X_0_2, X_0_3, X_0_4, X_0_5], [X_1_0, X_1_1, X_1_2, X_1_3, X_1_4, X_1_5], [X_2_0, X_2_1, X_2_2, X_2_3, X_2_4, X_2_5]]
+self._C: [[1011.3143381026482, 804.3154542530503, 1285.469959796972, 1542.5639517563664, 1611.5300447553616, 1933.8360537064339], [1011.3143381026482, 804.3154542530503, 1285.469959796972, 1542.5639517563664, 1611.5300447553616, 1933.8360537064339], [1011.3143381026482, 804.3154542530503, 1285.469959796972, 1542.5639517563664, 1611.5300447553616, 1933.8360537064339]]
+self._A: [[60, 7.5, 3.75, 3.0, 1.875, 1.5], [60, 7.5, 3.75, 3.0, 1.875, 1.5], [360, 45.0, 22.5, 18.0, 11.25, 9.0]]
+Minimum Communication Cost: 24129463627591509/10000000000000
+Solution: [[False, True, False, False, False, False], [False, True, False, False, False, False], [False, True, False, False, False, False]]
