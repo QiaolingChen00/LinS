@@ -1,7 +1,7 @@
 from z3 import *
 from math import log2
-from comm import TransformerCommunication
-from utils import _get_model_config
+# from comm import TransformerCommunication
+# from utils import _get_model_config
 
 
 class Simulator:
@@ -22,29 +22,53 @@ class Simulator:
         self._A= [[0 for _ in range(self._num_strategies)] for _ in range(3)]
         self._get_comm_cost()
         self._get_mem_cost()
+        print(f'self._X{self._X}')
+        print(f'self._C{self._C}')
+        print(f'self._A{self._A}')
 
         self._solver = Solver()
 
     def _set_memory_threshold(self):
 
         self._h,self._a,self._l=self._get_model_config()
-        self._activation=self._micro_batch_size*self._sequence_length*self._h*(34+(5*self._a*self._sequence_length/self._h))/10**9/self._SP
+        self._activation=2*self._micro_batch_size*self._sequence_length*self._h*(34+(5*self._a*self._sequence_length/self._h))/10**9/self._SP
 
         self._memory_threshold = 80 - self._activation
         print(f'micro_batch_size{self._micro_batch_size},activation{self._activation}')
+
+    def _get_model_config(self):
+        if self._model_size==7:
+            self._h=4096
+            self._a=32
+            self._l=32
+        elif self._model_size==13:
+            self._h=5120
+            self._a=40
+            self._l=40
+        elif self._model_size==30:
+            self._h=6144
+            self._a=48
+            self._l=60
+        else: 
+            self._h=8192
+            self._a=64
+            self._l=80
+
+        return self._h,self._a,self._l
 
     def _comm_cost(self,i,j):
         self._SP_comm_num=4*self._micro_batch_size*self._h*self._sequence_length/1024/1024/self._SP
         self._SP_comm=self._get_sp_comm_cost(self._SP_comm_num)
         comm_cost=0
-        if j==0:
-            comm_cost=0
+
         if i == 0:
             comm_cost=2 * self._model_size * (j + 1) 
         elif i == 1:
             comm_cost=self._grad_acc * self._model_size * (j + 1)
         else:
             comm_cost=self._model_size * (j + 1)
+        if j==0:
+            comm_cost=0
 
         comm_cost=comm_cost+self._SP_comm
 
@@ -107,7 +131,7 @@ class Simulator:
         min_cost = None
         while self._solver.check() == sat:
             model = self._solver.model()
-            current_cost = model[self._total_comm_cost].as_long()
+            current_cost = model[self._total_comm_cost].as_fraction()
             if min_cost is None or current_cost < min_cost:
                 min_cost = current_cost
                 solution = [[model.evaluate(self._X[i][j]) for j in range(self._num_strategies)] for i in range(3)]

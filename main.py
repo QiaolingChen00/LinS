@@ -22,8 +22,9 @@ def main():
         "global_batch_size": 4096,
         "sequence_length": 16384,
         "model_size":7,
+        'micro_bs':1,
         "grad_acc":1,
-        "SP":4
+        "SP":8
     }
 
     # for sp in [2,4,8,16]:
@@ -36,16 +37,15 @@ def main():
 
     bs_bn=_get_bs(config['global_batch_size'],config['world_size'],config['sequence_length'])
     print(bs_bn)
-    for i in range(len(bs_bn)):
-        micro_bs,grad_acc=bs_bn[i][0],bs_bn[i][1]
-        config.update({"micro_bs":micro_bs})
-        config.update({"grad_acc":grad_acc})
-        print(f'\n\nmicro_bs{micro_bs}')
-        for sp in [1,2,4,8,16]:
-            config.update({"SP":sp})
-            print(f'\nSP={sp}')
-            simulator = Simulator(config)
-            simulator.run()
+ 
+    # config.update({"micro_bs":micro_bs})
+    # config.update({"grad_acc":grad_acc})
+    # print(f'\n\nmicro_bs{micro_bs}')
+    # for sp in [1,2,4,8,16]:
+    #     config.update({"SP":sp})
+    #     print(f'\nSP={sp}')
+    simulator = Simulator(config)
+    simulator.run()
 
 
 if __name__ == "__main__":

@@ -1,14 +1,29 @@
 # 
 
-使用长序列训练 LLM 需要占用大量内存。为了在不大幅度降低训练速度的同时训练长序列的 LLMs，人们提出了很多方法来缓解内存压力。
 
-然而这些方法存在三个个局限性。
-（1）目前的方法在缩放序列长度和模型大小方面不够理想，GPU 内存和通信带宽可以进一步有效利用，以支持更长的序列长度和更大的模型尺寸。
-（2）现有方法在训练性能方面不够高效。许多方法通过激活重计算或在设备间分配数据来减少所需的内存，这带来了不可避免的计算或通信开销。例如，DeepSpeed Ulysses 需要通过网络在不同服务器之间频繁通信，而网络带宽通常较低。
-（3）现有的方法只支持有限的并行维度或者强依赖于模型和硬件的配置，导致次优的训练 performance。
+- 背景：sp很重要，
+- 现有方法存在的问题
+  - **现有方法只支持有限的并行维度**，因此要么支持的sequence length不够长（MSP、FSP），要么在减少了单个device所需的内存的同时引入大量通信（ulysses），训练效率不够高。\todo, MSP 和 MTP 的 pattern.
+  - **现有的方法需要手动调节**不同并行维度的划分方式（sp、tp等）。一方面，手动方法对用户有较高的要求：用户需要根据模型和集群环境手动探索并行方案，具有较大的开发成本，且需要用户有专业的系统知识。另一方面，手动方法不能保证手动选择的配置是最优的。
+- 目标：我们希望能有一个**自动**进行**多维度**并行配置的训练框架，支持**不同长度的sequence length**，并在不同的sequence length下都有**较快**的训练速度
+- 挑战
+  - 支持很长的sequence需要同时切分sequence和p、g、os多个维度，引入大量的通信开销。（虽然没有ulysses的通信开销大，但通信开销还是不能忽略）
+  - 很难直接估计不同并行方案的step time。现有的对模型训练step time的建模没有考虑sp这个维度，不适用于long sequence的场景。
+- 设计
+  - 为了减小通信开销，我们分析了transformer-based模型的计算和通信依赖，然后设计了selective overlap的方法，针对forward、backward的特点分别设计不同的overlap方式。
+  - 为了找到效率最高的并行方式，我们对计算和通信进行了建模，模拟训练的时间开销。对模拟出来（切分sequence、p、g、os的）不同并行方式的step time进行自动化搜索，找到高效的并行方式，用户无需依赖经验并试错。因为transformer-based的模型结构较为规律，因此搜索的代价不是很大。
+- 效果：我们提出一种面向sp的半自动化并行框架isp，搜索sp、p、g、os维度，在支持long sequence length的同时有较快的训练速度，无论模型大小、sequence长短我们都能搜索到一个不会oom且在训练速度上好的并行方案。
 
 
 我们研究了现有的四种提供序列并行的算法 MTP，MSP，FSP，DSP。
+
+
++ SP: semi-Auto paralleism search. All SP
+
+    + alo selection (A) For i in range(MTP，MSP，FSP，DSP):
+    + linear (X)
+
++ SP: LINS + Ulysses SP + PP.
 
 
 ## ISP 建模：
@@ -18,6 +33,9 @@
 #### Two-GPU Example
 
 pattern of Using MTP, MSP, FSP
+
+
+
 
 #### Comm model
 
@@ -90,8 +108,6 @@ IF SP>8: TODO
 
 
 ##### Overlap Modeling
-\( T_{\text{Comm}}(Total) = T_{\text{Comm}}(P_{para},ISP,allgather) +  T_{\text{Comm}}(P_{grad},ISP,reducescatter) + T_{\text{Comm}}(P_{grad},ISP,broadcast) + T_{\text{Comm}}(SP,ISP,all2all)\)。
+[T_{\text{Overlap}}=\sum(\max(T_\text{Comm,i}),T_\text{Comp,i})\]
 
-\( T_{\text{Comp}}(Total) = T_{\text{Comp}}(SP,b,C_{qkv},Gemm) + T_{\text{Comp}}(SP,b,C_{qkT+ScoreV},FlashAttn) + T_{\text{Comp}}(SP,b,C_{PostAttn},Gemm) + T_{\text{Comp}}(SP,b,C_{L1},Gemm) + T_{\text{Comp}}(SP,b,C_{L2},Gemm)\)。
 
-\( T_{\text{layer}}=\max(T_{\text{Comm}}(Total),T_{\text{Comp}}(Total))\)。
