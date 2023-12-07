@@ -124,21 +124,23 @@ class Simulator:
 
         overlap_cost = self.overlap_res._get_overlap(comm_range, self._SP)
 
-        os_comm_cost = 0
+        
         if comm_range == 1:
             os_comm_cost = 0
         else:
+            os_comm_cost = self._get_os_comm_cost(comm_range)
             # if i == 0:
             #     comm_cost = self._get_p_comm_cost(world_size)
             # elif i == 1:
             #     comm_cost = self._get_g_comm_cost(world_size)
-            if i == 2:  # only consider OS comm cost.
-                os_comm_cost = self._get_os_comm_cost(comm_range)
-            else:
-                os_comm_cost = 0
+            # if i == 2:  # only consider OS comm cost.
+            #     os_comm_cost = self._get_os_comm_cost(comm_range)
+            # else:
+            #     os_comm_cost = 0
 
-        if os_comm_cost < 0 or overlap_cost < 0:
-            raise ValueError
+        # if os_comm_cost < 0 or overlap_cost < 0:
+        #     import pdb;pdb.set_trace()
+        #     raise ValueError
 
         comm_cost = os_comm_cost + overlap_cost
 
