@@ -24,7 +24,7 @@ class Simulator:
         self._dtype_size = 2
         self._os_size_ratio = 2 if self._dtype_size == 2 else 1
         self._p_size = self._model_size * 10**9
-        print(config)
+  
 
         if cost_data is None:
             if cost_data_path is not None:
@@ -54,10 +54,6 @@ class Simulator:
         self._get_comm_cost()
         self._get_mem_cost()
 
-        print(f"num_strategies: {self._num_strategies}")
-        print(f"self._X: {self._X}")
-        print(f"self._C: {self._C}")
-        print(f"self._A: {self._A}")
 
         self._solver = Solver()
 
@@ -217,11 +213,15 @@ class Simulator:
             model = self._solver.model()
 
             # current_cost = model[self._total_comm_cost].as_long()
-            current_cost = model[self._total_comm_cost].as_fraction()
-            if min_cost is None or current_cost < min_cost:
-                min_cost = current_cost
+            current_cost_str = model[self._total_comm_cost].as_decimal(10)
+            current_cost_str = current_cost_str.rstrip('?')
+            current_cost_value = float(current_cost_str)  # 将字符串转换为浮点数
+            if min_cost is None or current_cost_value < min_cost:
+                min_cost = current_cost_value
                 solution = [[model.evaluate(self._X[i][j]) for j in range(self._num_strategies)] for i in range(3)]
-            self._solver.add(self._total_comm_cost < current_cost)  # Add constraint to find lower cost
+            # self._solver.add(self._total_comm_cost < current_cost)  # Add constraint to find lower cost
+            self._solver.add(self._total_comm_cost < current_cost_value)
+
 
         if min_cost is not None:
             print("Minimum Communication Cost:", min_cost)

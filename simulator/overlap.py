@@ -34,7 +34,7 @@ class TransformerOverlap:
         ).total_computation()
         # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0
-        print(f"comm_wp:{comm_wp},comm_sp:{comm_sp},comp_wp:{comp_wp}, comp_attn:{comp_attn}")
+        # print(f"comm_wp:{comm_wp},comm_sp:{comm_sp},comp_wp:{comp_wp}, comp_attn:{comp_attn}")
         return max(comm_wp, comp_wp)+comm_sp+comp_attn
 
 
