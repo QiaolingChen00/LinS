@@ -5,7 +5,7 @@ class TransformerComputation:
         self.h = h  # Hidden size
         self.sp_scale =sp_scale
         self.qkv_computation = 0
-        self.qkt_computation = 0
+        self.qkt_computation = 0 
         self.score_v_computation = 0
         self.post_attention_linear = 0
         self.first_linear = 0
@@ -58,6 +58,7 @@ class TransformerComputation:
 
     def compute_mlp_block(self):
         # First linear layer
+        # TODO：增加mlp ratio
         self.first_linear = 4 * self.b * self.s * self.h**2/self.sp_scale
         self.first_linear_lat = self.dtype_c * self.get_linear_cost(self.first_linear)
 
@@ -75,10 +76,17 @@ class TransformerComputation:
         self.logits_computation_lat = self.get_linear_cost(self.logits_computation)
         return self.logits_computation_lat
 
+    #TODO：所有计算量都应为字节数，这里需要仔细核对
     def total_computation(self):
         # Compute total for each block
+        
+        # xyt：attention_compuattion: wqkv and wo
+        # xyt: flash_attention_computation: actual attention computation
         self.attention_computation,self.flash_attention_computation = self.compute_attention_block()
+        
+        
         self.mlp_computation = self.compute_mlp_block()
+        
         self.logits_computation = self.compute_logits()
 
         # Total computation for one transformer layer
@@ -86,8 +94,11 @@ class TransformerComputation:
         
 
         # Total computation for all layers
+        # TODO：还要增加一个embedding
         total_computation = self.num_layers * per_layer_computation + self.logits_computation
         total_flash_computation=self.num_layers * self.flash_attention_computation
+        
+        # 返回的是forward+backward；其中backward=forward*2
         return 3*total_computation,3*total_flash_computation
 
 

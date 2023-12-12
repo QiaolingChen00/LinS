@@ -6,6 +6,7 @@ from simulator.simulator import Simulator
 
 def _get_bs(global_bs, world_size, sequence_length):
     num_tokens = global_bs * 1024
+    # TODO：支持更多的切分策略
     bs_bn = num_tokens // world_size // sequence_length
 
     factors = []
@@ -31,7 +32,7 @@ def main():
 
     }
 
-    cost_data_path = "/Users/chenqiaoling/Desktop/blog/codes/LinS/data/cost_data.pickle"
+    cost_data_path = "data/cost_data.pickle"
     # world_size = 64
     # for sp in [2,4,8,16]:
     #     config.update({"SP":sp})

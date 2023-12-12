@@ -67,6 +67,7 @@ class TransformerCommunication:
             post_attention_communication_volume, self.lins_scale
         ) + self.reducescatter(post_attention_communication_volume, self.lins_scale)
 
+        # TODO：mlp里面的ratio需要传入
         first_linear_communication_volume = self.get_volume(8 * self.h**2, "isp")
         self.first_linear_communication_latency = 2 * self.allgather(
             first_linear_communication_volume, self.lins_scale
@@ -77,11 +78,13 @@ class TransformerCommunication:
             second_linear_communication_volume, self.lins_scale
         ) + self.reducescatter(second_linear_communication_volume, self.lins_scale)
 
+        # TODO：增加micro_bsz
         attention_all_to_all_communication_volume = self.get_volume(4 * self.s * self.h, "isp")
         self.attention_all_to_all_communication_latency = 2 * self.alltoall(
             attention_all_to_all_communication_volume, self.sp_scale
         )
 
+        # TODO: 16可能要删除
         return 16 * (
            self.first_linear_communication_latency
             + self.second_linear_communication_latency

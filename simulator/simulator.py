@@ -34,8 +34,11 @@ class Simulator:
                 self.cost_data = None
         else:
             self.cost_data = cost_data
-
+            
+        # obtain the model cofing, hidden_size, number of heads, layer num
         self._h, self._a, self._l = self._get_model_config()
+        
+        
         self.overlap_res = TransformerOverlap(
             b=self._dtype_size,
             s=self._sequence_length,
@@ -45,14 +48,27 @@ class Simulator:
             vocab_size=self._vocab_size,
             cost_data=self.cost_data,
         )
-
+        
+        # set the memory threshold
         self._set_memory_threshold()
+        
+        # TODO 需要支持更多的切分策略
         self._num_strategies = int(log2(self._world_size / 8)) + 2
+        
+        # 并行策略的组合选项
+        # i: P，G，OS； j：节点数
         self._X = [[Bool(f"X_{i}_{j}") for j in range(self._num_strategies)] for i in range(3)]
+        # 通信开销
+        # P、G、OS切多少份对应的通信开销
         self._C = [[0 for _ in range(self._num_strategies)] for _ in range(3)]
+        # memory占用
+        # P、G、OS切多少份对应的memory开销
         self._A = [[0 for _ in range(self._num_strategies)] for _ in range(3)]
+        
         self._get_comm_cost()
+        
         self._get_mem_cost()
+        
         print(f'self._X{self._X}')
         print(f'self._C{self._C}')
         print(f'self._A{self._A}')
@@ -91,10 +107,10 @@ class Simulator:
             * self._sequence_length
             * self._h
             * (34 + (5 * self._a * self._sequence_length / self._h))
-            / 10**9
             / self._SP
         )
-        self._memory_threshold = 80 - self._activation
+        # 或许这里还少了一点东西？比如os? os在forward-backward和step的占比不一样
+        self._memory_threshold = 80 * (1024 ** 3) - self._activation
         if self._memory_threshold < 0:
             print(f"!!!warning!!!: self._memory_threshold: {self._memory_threshold} < 0")
         print(f"activation: {self._activation:.4f} GB")
@@ -102,6 +118,7 @@ class Simulator:
     def _lookup_comm_cost(self, type: CostType, world_size, complexity):
         return self.cost_data[type].predict(world_size, complexity)
 
+    # 这个通信量的计算是包括forward+backward？
     def _comm_cost(self, i: int, j: int) -> float:
         """
         Get communication cost.
@@ -112,6 +129,14 @@ class Simulator:
 
         Returns:
             float: communication cost
+        
+        commu cost = fwd + bwd + optimizer
+        
+        fwd = sp + wp
+        bwd = sp + wp
+        optimizer = zp
+        
+        其中 wp的通信可以overlap
         """
         # self._SP_comm = self._get_sp_comm_cost(self._SP)
 
@@ -120,10 +145,11 @@ class Simulator:
         else:
             comm_range = 1  # no comm cost
 
-
+        # 算overlap的通信开销
         overlap_cost = self.overlap_res._get_overlap(comm_range, self._SP)
 
         
+        # 算os的通信开销
         if comm_range == 1:
             os_comm_cost = 0
         else:
@@ -141,30 +167,38 @@ class Simulator:
         #     import pdb;pdb.set_trace()
         #     raise ValueError
 
+        # 总的通信开销
         comm_cost = os_comm_cost + overlap_cost
 
-        return comm_cost * 100
+        return comm_cost
 
     def _mem_cost(self, i, j):
         if i == 0:
             if j == 0:
+                # 不切P
                 return self._dtype_size * self._model_size
+            # 对P切j*8份
             return self._dtype_size * self._model_size / (j * 8)
         elif i == 1:
             if j == 0:
+                # 不切G
                 return self._dtype_size * self._model_size
+            # 对G切j*8份
             return self._dtype_size * self._model_size / (j * 8)
         else:
             if j == 0:
+                # 不切OS
                 return self._dtype_size * self._os_size_ratio * 3 * self._model_size
+            # 对OS切j*8份
             return self._dtype_size * self._os_size_ratio * 3 * self._model_size / (j * 8)
 
     def _get_comm_cost(self):
         for i in range(3):
             for j in range(self._num_strategies):
-                if j != 1 and j % 2 != 0:
+                #TODO：这里需要支持更多的切分策略
+                if j != 1 and j % 2 != 0: # 节点数为奇数的时候
                     self._C[i][j] = self._C[i][j - 1] * 1.2
-                else:
+                else: # 节点数为偶数
                     self._C[i][j] = self._comm_cost(i, j)
 
     def _get_mem_cost(self):
@@ -178,18 +212,21 @@ class Simulator:
     def _get_os_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
+        # TODO：这里是否要全量的通信数据？
         comm_cost = self._dtype_size * self._p_size
         return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)  # TODO: Should be broadcast
 
     def _strategy_constraint_strict(self):
-        for i in range(3):
+        for i in range(3): #xyt: 对于P、G、OS只可能有一种切分策略
             self._solver.add(Sum([If(self._X[i][j], 1, 0) for j in range(self._num_strategies)]) == 1)
-        for j in range(1, self._num_strategies):
+        #TODO：如果要让P和G切分保持一致，下面这个限制可能需要修改
+        for j in range(1, self._num_strategies): #xyt:感觉这里是想说明P和G的切分是绑定在一起的
             self._solver.add(Implies(self._X[0][j], Not(self._X[1][j - 1])))
-        for j in range(1, self._num_strategies):
+        for j in range(1, self._num_strategies): 
             self._solver.add(Implies(self._X[1][j], Not(self._X[2][j - 1])))
 
     def _memory_constraint_strict(self):
+        #TODO: 可能有两个限制，一个是forward+backward；一个是step，这两个阶段都需满足显存不超过80GB
         total_memory = Sum(
             [self._A[i][j] * If(self._X[i][j], 1, 0) for i in range(3) for j in range(self._num_strategies)]
         )
