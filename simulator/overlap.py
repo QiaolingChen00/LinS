@@ -10,7 +10,7 @@ from simulator.comp import TransformerComputation
 # 4. mmeory check
 # 5. 集成simulator
 class TransformerOverlap:
-    def __init__(self, b, s, h, num_layers, vocab_size, lins_scale=None, sp_scale=None, cost_data=None):
+    def __init__(self, b, s, h, num_layers, vocab_size, dtype_size, mlp_ratio, multiple_of, lins_scale=None, sp_scale=None, cost_data=None):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -18,6 +18,9 @@ class TransformerOverlap:
         self.vocab_size = vocab_size
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
+        self.dtype_size = dtype_size
+        self.mlp_ratio = mlp_ratio
+        self.multiple_of = multiple_of
 
         self.cost_data = cost_data
         assert cost_data is not None
@@ -28,12 +31,12 @@ class TransformerOverlap:
         self.sp_scale = sp_scale
         # 一个transformer layer的通信时延
         comm_wp,comm_sp = TransformerCommunication(
-            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data
+            self.b, self.s, self.h, self.num_layers, self.vocab_size, dtype_size=self.dtype_size, mlp_ratio=self.mlp_ratio, multiple_of=self.multiple_of, cost_data=self.cost_data
         ).communication_isp(self.lins_scale, self.sp_scale)
         
         # 一个transformer layer的计算时延
         comp_wp,comp_attn = TransformerComputation(
-            self.b, self.s, self.h, self.num_layers, self.vocab_size, cost_data=self.cost_data,sp_scale=self.sp_scale
+            self.b, self.s, self.h, self.num_layers, self.vocab_size, dtype_size=self.dtype_size, mlp_ratio=self.mlp_ratio, multiple_of=self.multiple_of, cost_data=self.cost_data,sp_scale=self.sp_scale
         ).total_computation()
         # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0

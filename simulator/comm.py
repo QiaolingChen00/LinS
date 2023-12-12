@@ -2,7 +2,7 @@ from utils.utils import CommPredict
 
 
 class TransformerCommunication:
-    def __init__(self, b, s, h, num_layers, vocab_size, lins_scale=None, sp_scale=None, cost_data=None):
+    def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -15,6 +15,10 @@ class TransformerCommunication:
         self.second_linear_communication_latency = 0
         self.attention_all_to_all_communication_latency = 0
         self.cost_data = cost_data
+        
+        self.mlp_ratio = mlp_ratio
+        self.multiple_of = multiple_of
+        self.dtype_size = dtype_size
 
         # self.toal_comm = self.communication_isp()
 
@@ -57,38 +61,40 @@ class TransformerCommunication:
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
 
-        qkv_communication_volume = self.get_volume(6 * self.h**2, "isp")
+        qkv_communication_volume = self.get_volume(3 * self.dtype_size * self.h**2, "isp")
+        # forward + backward
         self.qkv_communication_latency = 2 * self.allgather(
             qkv_communication_volume, self.lins_scale
         ) + self.reducescatter(qkv_communication_volume, self.lins_scale)
-
-        post_attention_communication_volume = self.get_volume(2 * self.h**2, "isp")
+        
+        post_attention_communication_volume = self.get_volume(self.dtype_size * self.h**2, "isp")
+        # forward + backward
         self.post_attention_communication_latency = 2 * self.allgather(
             post_attention_communication_volume, self.lins_scale
         ) + self.reducescatter(post_attention_communication_volume, self.lins_scale)
-
-        # TODO：mlp里面的ratio需要传入
-        first_linear_communication_volume = self.get_volume(8 * self.h**2, "isp")
+        
+        mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
+        first_linear_communication_volume = self.get_volume(self.dtype_size * mlp_hidden_size * self.h, "isp")
+        # forward + backward
         self.first_linear_communication_latency = 2 * self.allgather(
             first_linear_communication_volume, self.lins_scale
         ) + self.reducescatter(first_linear_communication_volume, self.lins_scale)
 
-        second_linear_communication_volume = self.get_volume(8 * self.h**2, "isp")
+        second_linear_communication_volume = self.get_volume(self.dtype_size * mlp_hidden_size* self.h, "isp")
+        # forward + backward
         self.second_linear_communication_latency = 2 * self.allgather(
             second_linear_communication_volume, self.lins_scale
         ) + self.reducescatter(second_linear_communication_volume, self.lins_scale)
 
-        # TODO：增加micro_bsz
-        attention_all_to_all_communication_volume = self.get_volume(4 * self.s * self.h, "isp")
+        attention_all_to_all_communication_volume = self.get_volume(4 * self.dtype_size * self.b * self.s * self.h, "isp")
         self.attention_all_to_all_communication_latency = 2 * self.alltoall(
             attention_all_to_all_communication_volume, self.sp_scale
         )
 
-        # TODO: 16可能要删除
-        return 16 * (
+        return (
            self.first_linear_communication_latency
             + self.second_linear_communication_latency
             + self.qkv_communication_latency
             + self.post_attention_communication_latency
-        ),16* self.attention_all_to_all_communication_latency
+        ), self.attention_all_to_all_communication_latency
             

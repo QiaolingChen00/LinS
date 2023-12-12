@@ -6,6 +6,7 @@ import torch.distributed as dist
 from torch.distributed import GroupMember
 
 
+#TODO: 这里需要增加一个broadcast
 class CostType:
     ALL2ALL = "all2all"
     ALLREDUCE = "all_reduce"

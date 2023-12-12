@@ -1,5 +1,5 @@
 class TransformerComputation:
-    def __init__(self, b, s, h, num_layers, vocab_size,sp_scale,cost_data=None):
+    def __init__(self, b, s, h, num_layers, vocab_size,sp_scale, dtype_size, mlp_ratio, multiple_of, cost_data=None):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -15,9 +15,11 @@ class TransformerComputation:
         self.flash_attention_computation=0
         self.mlp_computation = 0
         self.cost_data = cost_data
-        self.dtype_c = 1  # bfloat16
         self.num_layers = num_layers
         self.vocab_size = vocab_size
+        self.dtype_size = dtype_size
+        self.mlp_ratio = mlp_ratio
+        self.multiple_of = multiple_of
         # self.comp = self.total_computation(num_layers, vocab_size)
 
     def get_linear_cost(self, complexity):
@@ -26,14 +28,13 @@ class TransformerComputation:
     def compute_attention_block(self):
         # Calculate Q, K, V
         # self.qkv_computation = 6 * self.b * self.s * self.h**2
-        self.qkv_computation_one_linear = self.b * self.s * self.h**2/self.sp_scale
-        self.qkv_computation_lat = self.dtype_c * 3 * self.get_linear_cost(self.qkv_computation_one_linear)
+        self.qkv_computation_one_linear = self.dtype_size * 3 * self.b * self.s/self.sp_scale * self.h**2
+        self.qkv_computation_lat = self.get_linear_cost(self.qkv_computation_one_linear)
 
         # QK^T matrix multiplication
         # self.qkt_computation = 2 * self.b * self.s**2 * self.h
-        self.qkt_computation_one_linear = self.b * self.s**2 * self.h/self.sp_scale
-        # TODO, make dtype_c as input key
-        self.qkt_computation_lat = self.dtype_c * self.get_linear_cost(self.qkt_computation_one_linear)
+        self.qkt_computation_one_linear = self.dtype_size * self.b * self.s**2 * self.h/self.sp_scale
+        self.qkt_computation_lat = self.get_linear_cost(self.qkt_computation_one_linear)
 
         # Score dot V
         self.score_v_computation = self.qkt_computation  # Same as self.qkt_computation
@@ -41,8 +42,8 @@ class TransformerComputation:
 
         # Linear mapping after attention
         # self.post_attention_linear = 2 * self.b * self.s * self.h**2
-        self.post_attention_linear_one_linear = self.b * self.s * self.h**2/self.sp_scale
-        self.post_attention_linear_lat = self.dtype_c * self.get_linear_cost(self.post_attention_linear_one_linear)
+        self.post_attention_linear_one_linear = self.dtype_size * self.b * self.s/self.sp_scale * self.h**2
+        self.post_attention_linear_lat = self.get_linear_cost(self.post_attention_linear_one_linear)
 
         # Total computation for attention block
         # total_attention_computation = self.qkv_computation + self.qkt_computation + self.score_v_computation + self.post_attention_linear
@@ -54,13 +55,13 @@ class TransformerComputation:
         total_flash_attentino_computation_lat=(
              self.qkt_computation_lat
             + self.score_v_computation_lat)
-        return total_attention_computation_lat,total_flash_attentino_computation_lat
+        return total_attention_computation_lat, total_flash_attentino_computation_lat
 
     def compute_mlp_block(self):
         # First linear layer
-        # TODO：增加mlp ratio
-        self.first_linear = 4 * self.b * self.s * self.h**2/self.sp_scale
-        self.first_linear_lat = self.dtype_c * self.get_linear_cost(self.first_linear)
+        mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
+        self.first_linear = self.dtype_size  * self.b * self.s * mlp_hidden_size * self.h/self.sp_scale
+        self.first_linear_lat = self.get_linear_cost(self.first_linear)
 
         # Second linear layer
         self.second_linear = self.first_linear  # Same as self.first_linear
@@ -71,12 +72,10 @@ class TransformerComputation:
 
     def compute_logits(self):
         # Logits computation
-        # TODO: fix me!
-        self.logits_computation = 2 * self.b * self.s * self.h * self.vocab_size
+        self.logits_computation = self.dtype_size * self.b * self.s * self.h * self.vocab_size
         self.logits_computation_lat = self.get_linear_cost(self.logits_computation)
         return self.logits_computation_lat
 
-    #TODO：所有计算量都应为字节数，这里需要仔细核对
     def total_computation(self):
         # Compute total for each block
         
@@ -94,12 +93,11 @@ class TransformerComputation:
         
 
         # Total computation for all layers
-        # TODO：还要增加一个embedding
-        total_computation = self.num_layers * per_layer_computation + self.logits_computation
+        total_computation = self.num_layers * per_layer_computation + 2 * self.logits_computation
         total_flash_computation=self.num_layers * self.flash_attention_computation
         
         # 返回的是forward+backward；其中backward=forward*2
-        return 3*total_computation,3*total_flash_computation
+        return 3 * total_computation, 3 * total_flash_computation
 
 
 # Example usage

@@ -36,7 +36,7 @@ class Simulator:
             self.cost_data = cost_data
             
         # obtain the model cofing, hidden_size, number of heads, layer num
-        self._h, self._a, self._l = self._get_model_config()
+        self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = self._get_model_config()
         
         
         self.overlap_res = TransformerOverlap(
@@ -45,6 +45,9 @@ class Simulator:
             h=self._h,
             # a=self._a,
             num_layers=self._l,
+            dtype_size=self._dtype_size,
+            mlp_ratio=self.mlp_ratio,
+            multiple_of=self.multiple_of,
             vocab_size=self._vocab_size,
             cost_data=self.cost_data,
         )
@@ -97,8 +100,11 @@ class Simulator:
             self._h = 8192
             self._a = 64
             self._l = 80
+        
+        self.mlp_ratio = 8 / 3
+        self.multiple_of = 256
 
-        return self._h, self._a, self._l
+        return self._h, self._a, self._l, self.mlp_ratio, self.multiple_of
 
     def _set_memory_threshold(self):
         self._activation = (
@@ -109,7 +115,6 @@ class Simulator:
             * (34 + (5 * self._a * self._sequence_length / self._h))
             / self._SP
         )
-        # 或许这里还少了一点东西？比如os? os在forward-backward和step的占比不一样
         self._memory_threshold = 80 * (1024 ** 3) - self._activation
         if self._memory_threshold < 0:
             print(f"!!!warning!!!: self._memory_threshold: {self._memory_threshold} < 0")
@@ -118,7 +123,6 @@ class Simulator:
     def _lookup_comm_cost(self, type: CostType, world_size, complexity):
         return self.cost_data[type].predict(world_size, complexity)
 
-    # 这个通信量的计算是包括forward+backward？
     def _comm_cost(self, i: int, j: int) -> float:
         """
         Get communication cost.
@@ -212,17 +216,15 @@ class Simulator:
     def _get_os_comm_cost(self, comm_range):
         if comm_range <= 1:
             return 0
-        # TODO：这里是否要全量的通信数据？
         comm_cost = self._dtype_size * self._p_size
         return self._lookup_comm_cost(CostType.ALLGATHER, comm_range, comm_cost)  # TODO: Should be broadcast
 
     def _strategy_constraint_strict(self):
         for i in range(3): #xyt: 对于P、G、OS只可能有一种切分策略
             self._solver.add(Sum([If(self._X[i][j], 1, 0) for j in range(self._num_strategies)]) == 1)
-        #TODO：如果要让P和G切分保持一致，下面这个限制可能需要修改
         for j in range(1, self._num_strategies): #xyt:感觉这里是想说明P和G的切分是绑定在一起的
-            self._solver.add(Implies(self._X[0][j], Not(self._X[1][j - 1])))
-        for j in range(1, self._num_strategies): 
+            self._solver.add(self._X[0][j] == self._X[1][j])
+        for j in range(1, self._num_strategies): # 这个约束条件保证os的切分不能小于G的切分
             self._solver.add(Implies(self._X[1][j], Not(self._X[2][j - 1])))
 
     def _memory_constraint_strict(self):
