@@ -6,13 +6,28 @@ import torch.distributed as dist
 from torch.distributed import GroupMember
 
 
-#TODO: 这里需要增加一个broadcast
+# TODO: 这里需要增加一个broadcast
 class CostType:
     ALL2ALL = "all2all"
     ALLREDUCE = "all_reduce"
     REDUCESCATTER = "reduce_scatter"
     ALLGATHER = "all_gahter"
     LINEAR = "linear"
+    BROADCAST = "broadcast"
+
+
+class SovlerType:
+    MODEL = "model"
+    PP = "pp"
+    OS = "os"
+    P = "P"
+    G = "G"
+
+
+class BW:
+    IB = 100 * 1024**3
+    A800_NVL = 200 * 1024**3
+    A100_NVL = 300 * 1024**3
 
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
@@ -27,6 +42,8 @@ GB = 1024 * MB
 
 MS = 1000
 US = 1000 * MS
+
+_79GB = 79 * GB
 
 
 def pretty_print_size(x):

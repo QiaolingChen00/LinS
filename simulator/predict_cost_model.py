@@ -111,7 +111,7 @@ class PolynomialModel:
         assert ValueError, f"predict value:{x} out of range"
 
     def predict(self, world_size, complexity):
-        if world_size != 1 and world_size % 2 != 0:
+        if world_size != 1 and world_size not in [0, 2]:
             return 999999
 
         try:
@@ -119,7 +119,8 @@ class PolynomialModel:
             X_pred = self.poly_features.fit_transform([[complexity]])
             Y_pred = model.predict(X_pred)[0]
             return Y_pred
-        except Exception:
+        except Exception as e:
+            print(f"e: {e}", flush=True)
             import pdb
 
             pdb.set_trace()
