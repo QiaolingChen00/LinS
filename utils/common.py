@@ -14,6 +14,11 @@ class CostType:
     ALLGATHER = "all_gahter"
     LINEAR = "linear"
 
+class AlgoType:
+    ISP = "isp"
+    MSP = "msp"
+    FSP = "fsp"
+
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
 
