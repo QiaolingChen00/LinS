@@ -6,42 +6,12 @@ from math import log2
 import z3
 
 from simulator.ab_cost_model import get_comm_cost
+from simulator.mem import TransformerMemory
 from simulator.overlap import TransformerOverlap
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import *
-from utils.common import _79GB, SovlerType
-from simulator.algo import ISP, MSP, FSP
-from utils.common import AlgoType
-
-
-def get_model_config(model_size):
-    if model_size == 7:
-        h = 4096
-        a = 32
-        l = 32
-    elif model_size == 13:
-        h = 5120
-        a = 40
-        l = 40
-    elif model_size == 20:
-        h = 5120
-        a = 40
-        l = 60
-    elif model_size == 30:
-        h = 6144
-        a = 48
-        l = 60
-    else:
-        h = 8192
-        a = 64
-        l = 80
-
-    mlp_ratio = 8 / 3
-    multiple_of = 256
-
-    return h, a, l, mlp_ratio, multiple_of
+from utils.common import _79GB, GB, AlgoType, CostType, SovlerType, get_model_config
 
 
 class SPIter:
@@ -155,6 +125,7 @@ class ExternalRestraint:
         self._param_elements = self.model_size * 10**9
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
 
     def get_bsz(self, pp_size, sp_size, seq_len):
         num_tokens = self.global_bsz
@@ -185,12 +156,7 @@ class ExternalRestraint:
         p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * get_p2p_cost(buffer_size)
         return p2p_latency
 
-    def _get_memory_threshold(self, micro_bsz, sp_size, pp_size, layer_num, seq_len):
-        # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
-        activation = (self.dtype_size * micro_bsz * seq_len * (34 * self._h + 5 * self._a * seq_len)) * layer_num
-        return _79GB - activation, activation
-
-    def _comm_cost(self, i: int, j: int, sp_size: int, overlap_res, model_p_element) -> float:
+    def _comm_cost(self, i: int, j: int, overlap_res, model_p_element, algo_type) -> float:
         """
         Get communication cost.
 
@@ -210,19 +176,18 @@ class ExternalRestraint:
         其中 wp的通信可以overlap
         """
         if j != 0:
-            comm_range = j * 8
+            lins_scale = j * 8
         else:
-            comm_range = 1  # no comm cost
+            lins_scale = 1  # no comm cost
 
         # 算overlap的通信开销
-        # overlap_cost = overlap_res._get_overlap(comm_range, sp_size)
-        overlap_cost = 0
+        overlap_cost = overlap_res._get_overlap(lins_scale, algo_type)
 
         # 算os的通信开销
-        if comm_range == 1:
+        if lins_scale == 1:
             os_comm_cost = 0
         else:
-            os_comm_cost = self._get_os_comm_cost(comm_range, model_p_element)
+            os_comm_cost = self._get_os_comm_cost(lins_scale, model_p_element)
 
         # 总的通信开销
         comm_cost = os_comm_cost + overlap_cost
@@ -252,14 +217,14 @@ class ExternalRestraint:
                 # 对OS切j*8份
                 return self.dtype_size * self.fp32_ratio * 3 * model_p_element / (j * 8)
 
-    def _get_comm_cost(self, num_strategies, sp_size, overlap_res, model_p_element):
+    def _get_comm_cost(self, num_strategies, overlap_res, model_p_element, algo_type):
         # 通信开销
         # P、G、OS切多少份对应的通信开销
         C = [[0 for _ in range(num_strategies)] for _ in range(3)]
         for i in range(3):
             for j in range(num_strategies):
                 # TODO：这里需要支持更多的切分策略
-                C[i][j] = self._comm_cost(i, j, sp_size, overlap_res, model_p_element)
+                C[i][j] = self._comm_cost(i, j, overlap_res, model_p_element, algo_type)
         return C
 
     def _get_mem_cost(self, num_strategies, model_p_element):
@@ -294,49 +259,32 @@ class ExternalRestraint:
             for sp in SPIter(self.world_size // pp, self._a):
                 bs_bns = self.get_bsz(pp, sp, self.seq_len)
                 for micro_bsz, micro_num in bs_bns:
-                    layer_nums = self._l // pp
-                    seq_len = self.seq_len // sp
                     pp_model_p_element = self._param_elements // pp
+                    for algo_type in self._algo_list:
+                        overlap_res = TransformerOverlap(
+                            micro_bsz=micro_bsz,
+                            seq_len=self.seq_len,
+                            vocab_size=self.vocab_size,
+                            dtype_size=self.dtype_size,
+                            model_size=self.model_size,
+                            sp_size=sp,
+                            pp_size=pp,
+                            cost_data=self.cost_data,
+                        )
+                        mem_res = TransformerMemory(self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size)
 
-                    if algo_type == AlgoType.ISP:
-                        self.algo = ISP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
-                    elif algo_type == AlgoType.MSP:
-                        self.algo = MSP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
-                    elif algo_type == AlgoType.FSP:
-                        self.algo = FSP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
+                        num_strategies = int(log2(self.world_size / 8)) + 2
+                        C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)
+                        A = self._get_mem_cost(num_strategies, pp_model_p_element)
+                        memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
-                    self._memory_threshold = self.algo.set_memory_threshold()
-                    self.algo.get_comm_cost()
-                    self.algo.get_mem_cost()
-                    self._X, self._C, self._A = self.algo.get_XCA()
-
-
-                    overlap_res = TransformerOverlap(
-                        b=self.dtype_size,
-                        s=seq_len,
-                        h=self._h,
-                        # a=self._a,
-                        num_layers=layer_nums,
-                        dtype_size=self.dtype_size,
-                        mlp_ratio=self.mlp_ratio,
-                        multiple_of=self.multiple_of,
-                        vocab_size=self.vocab_size,
-                        cost_data=self.cost_data,
-                    )
-
-                    num_strategies = int(log2(self.world_size / 8)) + 2
-                    C = self._get_comm_cost(num_strategies, sp, overlap_res, self._param_elements)
-                    A = self._get_mem_cost(num_strategies, pp_model_p_element)
-
-                    memory_threshold, activation = self._get_memory_threshold(micro_bsz, sp, pp, layer_nums, seq_len)
-
-                    self.dump_constraint(C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num)
-                    simulator = Simulator(memory_threshold, num_strategies, C=C, A=A)
-                    cost, solution, mem_cost = simulator.run()
-                    print(f"min_cost: {cost}, solution:{solution}", flush=True)
-                    if cost is not None and cost < min_cost:
-                        min_cost = cost
-                        min_cost_solution = (pp, sp, micro_bsz, micro_num, mem_cost, solution)
+                        self.dump_constraint(C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num)
+                        simulator = Simulator(memory_threshold, num_strategies, C=C, A=A)
+                        cost, solution, mem_cost = simulator.run()
+                        print(f"min_cost: {cost}, solution:{solution}", flush=True)
+                        if cost is not None and cost < min_cost:
+                            min_cost = cost
+                            min_cost_solution = (pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution)
 
         if min_cost_solution is not None:
             print("Minimum Communication Cost:", min_cost)

@@ -15,10 +15,12 @@ class CostType:
     LINEAR = "linear"
     BROADCAST = "broadcast"
 
+
 class AlgoType:
     ISP = "isp"
     MSP = "msp"
     FSP = "fsp"
+
 
 class SovlerType:
     MODEL = "model"
@@ -32,11 +34,6 @@ class BW:
     IB = 100 * 1024**3
     A800_NVL = 200 * 1024**3
     A100_NVL = 300 * 1024**3
-
-class AlgoType:
-    ISP = "isp"
-    MSP = "msp"
-    FSP = "fsp"
 
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
@@ -53,6 +50,34 @@ MS = 1000
 US = 1000 * MS
 
 _79GB = 79 * GB
+
+
+def get_model_config(model_size):
+    if model_size == 7:
+        h = 4096
+        a = 32
+        l = 32
+    elif model_size == 13:
+        h = 5120
+        a = 40
+        l = 40
+    elif model_size == 20:
+        h = 5120
+        a = 40
+        l = 60
+    elif model_size == 30:
+        h = 6144
+        a = 48
+        l = 60
+    else:
+        h = 8192
+        a = 64
+        l = 80
+
+    mlp_ratio = 8 / 3
+    multiple_of = 256
+
+    return h, a, l, mlp_ratio, multiple_of
 
 
 def pretty_print_size(x):

@@ -1,5 +1,7 @@
+from utils.common import AlgoType, CostType, SovlerType
 from utils.utils import CommPredict
-from utils.common import AlgoType
+
+from simulator.ab_cost_model import get_comm_cost
 
 
 class TransformerCommunication:
@@ -24,32 +26,22 @@ class TransformerCommunication:
 
         # self.toal_comm = self.communication_isp()
 
-    def get_comm_cost(self, comm_alo, scale, volume):
-        return self.cost_data[comm_alo].predict(scale, volume)
-
     def allgather(self, volume, scale):
         if scale <= 1:
             return 0
-        comm_alo = "all_gahter"
-        predict = self.get_comm_cost(comm_alo, scale, volume)
-        # print(f"allgather:{predict}")
+        predict = get_comm_cost(SovlerType.MODEL, CostType.ALLGATHER, scale, volume)
         return predict
 
     def reducescatter(self, volume, scale):
         if scale <= 1:
             return 0
-        comm_alo = "reduce_scatter"
-        # predict = CommPredict(volume,comm_alo,scale).prediction
-        predict = self.get_comm_cost(comm_alo, scale, volume)
-        # print(f"reducescatter:{predict}")
+        predict = get_comm_cost(SovlerType.MODEL, CostType.REDUCESCATTER, scale, volume)
         return predict
 
     def alltoall(self, volume, scale):
         if scale <= 1:
             return 0
-        comm_alo = "all2all"
-        # predict = CommPredict(volume,comm_alo,scale).prediction
-        predict = self.get_comm_cost(comm_alo, scale, volume)
+        predict = get_comm_cost(SovlerType.MODEL, CostType.ALL2ALL, scale, volume)
         return predict
 
     def communication_isp(self, lins_scale, sp_scale):
@@ -83,7 +75,7 @@ class TransformerCommunication:
         qkv_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
         wo_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
         mlp_w1_latency = 2 * self.allgather(mlp_w1_volume, self.lins_scale) + self.reducescatter(mlp_w1_volume, self.lins_scale)
-        mlp_w2_latency = mlp_w2_latency
+        mlp_w2_latency = mlp_w1_latency
         
         # sp communication
         all2all_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
@@ -124,7 +116,7 @@ class TransformerCommunication:
         mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
         # all2all
-        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
+        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size
         
         # compute the sp latency (forward + backward)
         qkv_sp_latency = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale)
@@ -145,7 +137,7 @@ class TransformerCommunication:
         qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
         wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
         mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
-        mlp_w2_wp_latency = self.mlp_w1_wp_latency
+        mlp_w2_wp_latency = mlp_w1_wp_latency
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
@@ -202,7 +194,7 @@ class TransformerCommunication:
         qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
         wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
         mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
-        mlp_w2_wp_latency = self.mlp_w1_wp_latency
+        mlp_w2_wp_latency = mlp_w1_wp_latency
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
@@ -216,4 +208,5 @@ class TransformerCommunication:
             return self.communication_msp(lins_scale, sp_scale)
         elif algo_type == AlgoType.FSP:
             return self.communication_fsp(lins_scale, sp_scale)
+        raise ValueError(f"Unkoen algo_type: {algo_type}")
         

@@ -1,5 +1,6 @@
 from utils.common import AlgoType
 
+
 class TransformerComputation:
     def __init__(self, b, s, h, num_layers, vocab_size,sp_scale, dtype_size, mlp_ratio, multiple_of, cost_data=None):
         self.b = b  # Batch size
@@ -39,7 +40,7 @@ class TransformerComputation:
         latency = self.get_linear_cost(volumn)
         return latency
     
-    def _compute_linears(self, scale):
+    def _compute_linears(self):
         '''
         compute the latency for linears in one transformer layer, such as wqkv, wo, mlp
         '''
