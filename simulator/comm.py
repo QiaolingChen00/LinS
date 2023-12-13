@@ -1,4 +1,5 @@
 from utils.utils import CommPredict
+from utils.common import AlgoType
 
 
 class TransformerCommunication:
@@ -97,4 +98,20 @@ class TransformerCommunication:
             + self.qkv_communication_latency
             + self.post_attention_communication_latency
         ), self.attention_all_to_all_communication_latency
-            
+    
+    # TODO: xyt
+    def communication_msp(self, lins_scale, sp_scale):
+        pass
+    
+    # TODO: xyt
+    def communication_fsp(self, lins_scale, sp_scale):
+        pass        
+    
+    def communication(self, lins_scale, sp_scale, algo_type):
+        if algo_type == AlgoType.ISP:
+            return self.communication_isp(lins_scale, sp_scale)
+        elif algo_type == AlgoType.MSP:
+            return self.communication_msp(lins_scale, sp_scale)
+        elif algo_type == AlgoType.FSP:
+            return self.communication_fsp(lins_scale, sp_scale)
+        

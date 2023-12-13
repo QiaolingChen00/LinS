@@ -1,3 +1,5 @@
+from utils.common import AlgoType
+
 class TransformerComputation:
     def __init__(self, b, s, h, num_layers, vocab_size,sp_scale, dtype_size, mlp_ratio, multiple_of, cost_data=None):
         self.b = b  # Batch size
@@ -75,8 +77,8 @@ class TransformerComputation:
         self.logits_computation = self.dtype_size * self.b * self.s * self.h * self.vocab_size
         self.logits_computation_lat = self.get_linear_cost(self.logits_computation)
         return self.logits_computation_lat
-
-    def total_computation(self):
+    
+    def total_computation_isp(self):
         # Compute total for each block
         
         # xyt：attention_compuattion: wqkv and wo
@@ -98,6 +100,22 @@ class TransformerComputation:
         
         # 返回的是forward+backward；其中backward=forward*2
         return 3 * total_computation, 3 * total_flash_computation
+
+    def total_computation_msp(self):
+        pass
+    
+    def total_computation_fsp(self):
+        pass
+
+    def total_computation(self, algo_type):
+        
+        if algo_type == AlgoType.ISP:
+            return self.total_computation_isp()
+        elif algo_type == AlgoType.MSP:
+            return self.total_computation_msp()
+        elif algo_type == AlgoType.FSP():
+            return self.total_computation_fsp()
+        
 
 
 # Example usage
