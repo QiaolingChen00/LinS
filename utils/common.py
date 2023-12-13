@@ -33,6 +33,11 @@ class BW:
     A800_NVL = 200 * 1024**3
     A100_NVL = 300 * 1024**3
 
+class AlgoType:
+    ISP = "isp"
+    MSP = "msp"
+    FSP = "fsp"
+
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
 

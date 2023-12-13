@@ -1,4 +1,5 @@
 from utils.utils import CommPredict
+from utils.common import AlgoType
 
 
 class TransformerCommunication:
@@ -19,6 +20,7 @@ class TransformerCommunication:
         self.mlp_ratio = mlp_ratio
         self.multiple_of = multiple_of
         self.dtype_size = dtype_size
+        self.mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
 
         # self.toal_comm = self.communication_isp()
 
@@ -50,51 +52,168 @@ class TransformerCommunication:
         predict = self.get_comm_cost(comm_alo, scale, volume)
         return predict
 
-    def get_volume(self, volume, alo):
-        if alo == "isp":
-            return volume
-
-        # TODO MSP,FSP etc.
-        return 0
-
     def communication_isp(self, lins_scale, sp_scale):
+        '''
+        sp communication:
+        
+        comm(sp) = comm(forward, sp) + comm(backward, sp)
+        
+        comm(forward, sp) = 4 * comm(all2all, s/sp, b, h/sp)
+
+        comm(backward, sp) = 4 * comm(all2all, s/sp, b, h/sp)
+        
+        wp communication:
+        
+        comm(wp) = comm(forwad, wp) + comm(backward, wp)
+        
+        comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
+        
+        comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        '''
+        
+        self.lins_scale = lins_scale
+        self.sp_scale = sp_scale
+        
+        # wp communication
+        qkv_wp_volume = 3 * self.dtype_size * self.h ** 2
+        wo_wp_volume = self.dtype_size * self.h ** 2
+        mlp_w1_volume = self.dtype_size * self.h * self.mlp_hidden_size
+        mlp_w2_volume = mlp_w1_volume
+        
+        qkv_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
+        wo_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
+        mlp_w1_latency = 2 * self.allgather(mlp_w1_volume, self.lins_scale) + self.reducescatter(mlp_w1_volume, self.lins_scale)
+        mlp_w2_latency = mlp_w2_latency
+        
+        # sp communication
+        all2all_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
+        all2all_latency = self.alltoall(all2all_volume, self.sp_scale)
+        
+        wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency
+        sp_comm_latency = 8 * all2all_latency
+        
+        return wp_comm_latency, sp_comm_latency
+    
+    def communication_msp(self, lins_scale, sp_scale):
+        '''
+        sp communication:
+        
+        comm(sp) = comm(forward, sp) + comm(backward, sp)
+        
+        comm(forward, sp) = 2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        
+        wp communication:
+        
+        comm(wp) = comm(forwad, wp) + comm(backward, wp)
+        
+        comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
+        
+        comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        '''
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
 
-        qkv_communication_volume = self.get_volume(3 * self.dtype_size * self.h**2, "isp")
-        # forward + backward
-        self.qkv_communication_latency = 2 * self.allgather(
-            qkv_communication_volume, self.lins_scale
-        ) + self.reducescatter(qkv_communication_volume, self.lins_scale)
+        # compute sp communication
+        # all_gather and reduceScatter have the same commu volume
+        # the communication volume in backward is equal to the forward
+        qkv_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward all-gather
+        wo_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
+        mlp_w1_sp_volume = qkv_sp_volume # the forward all-gather
+        mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
-        post_attention_communication_volume = self.get_volume(self.dtype_size * self.h**2, "isp")
-        # forward + backward
-        self.post_attention_communication_latency = 2 * self.allgather(
-            post_attention_communication_volume, self.lins_scale
-        ) + self.reducescatter(post_attention_communication_volume, self.lins_scale)
+        # all2all
+        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
         
-        mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
-        first_linear_communication_volume = self.get_volume(self.dtype_size * mlp_hidden_size * self.h, "isp")
-        # forward + backward
-        self.first_linear_communication_latency = 2 * self.allgather(
-            first_linear_communication_volume, self.lins_scale
-        ) + self.reducescatter(first_linear_communication_volume, self.lins_scale)
+        # compute the sp latency (forward + backward)
+        qkv_sp_latency = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale)
+        wo_sp_latency = self.reducescatter(wo_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale)
+        mlp_w1_sp_latency = self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale)
+        mlp_w2_sp_latency = self.reducescatter(mlp_w2_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
+        all2all_sp_latency = 2 * 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
 
-        second_linear_communication_volume = self.get_volume(self.dtype_size * mlp_hidden_size* self.h, "isp")
-        # forward + backward
-        self.second_linear_communication_latency = 2 * self.allgather(
-            second_linear_communication_volume, self.lins_scale
-        ) + self.reducescatter(second_linear_communication_volume, self.lins_scale)
+        sp_comm_latency = qkv_sp_latency + wo_sp_latency + mlp_w1_sp_latency + mlp_w2_sp_latency + all2all_sp_latency
+        
+        # commpute wp communication
+        qkv_wp_volume = 3 * self.h * self.h / self.sp_scale * self.dtype_size
+        wo_wp_volume = self.h * self.h / self.sp_scale * self.dtype_size
+        
+        # w2 and w3 have the same volume as w1
+        mlp_w1_wp_volume = self.h * self.mlp_hidden_size / self.sp_scale * self.dtype_size
+        
+        qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
+        wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
+        mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
+        mlp_w2_wp_latency = self.mlp_w1_wp_latency
+        
+        wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
+        
+        return wp_comm_latency, sp_comm_latency
+    
+    def communication_fsp(self, lins_scale, sp_scale):
+        '''
+        sp communication:
+        
+        comm(sp) = comm(forward, sp) + comm(backward, sp)
+        
+        comm(forward, sp) = 2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
 
-        attention_all_to_all_communication_volume = self.get_volume(4 * self.dtype_size * self.b * self.s * self.h, "isp")
-        self.attention_all_to_all_communication_latency = 2 * self.alltoall(
-            attention_all_to_all_communication_volume, self.sp_scale
-        )
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        
+        wp communication:
+        
+        comm(wp) = comm(forwad, wp) + comm(backward, wp)
+        
+        comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
+        
+        comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        '''
+        self.lins_scale = lins_scale
+        self.sp_scale = sp_scale
 
-        return (
-           self.first_linear_communication_latency
-            + self.second_linear_communication_latency
-            + self.qkv_communication_latency
-            + self.post_attention_communication_latency
-        ), self.attention_all_to_all_communication_latency
-            
+        # compute sp communication
+        # all_gather and reduceScatter have the same commu volume
+        # the communication volume in backward is equal to the forward
+        qkv_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward all-gather
+        wo_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
+        mlp_w1_sp_volume = qkv_sp_volume # the forward all-gather
+        mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
+        
+        # all2all
+        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
+        
+        # compute the sp latency (forward + backward)
+        qkv_sp_latency = 2 * self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale)
+        wo_sp_latency = self.reducescatter(wo_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale)
+        mlp_w1_sp_latency = 2 * self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale)
+        mlp_w2_sp_latency = self.reducescatter(mlp_w2_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
+        all2all_sp_latency = 2 * 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
+
+        sp_comm_latency = qkv_sp_latency + wo_sp_latency + mlp_w1_sp_latency + mlp_w2_sp_latency + all2all_sp_latency
+        
+        # commpute wp communication
+        qkv_wp_volume = 3 * self.h * self.h / self.sp_scale * self.dtype_size
+        wo_wp_volume = self.h * self.h / self.sp_scale * self.dtype_size
+        
+        # w2 and w3 have the same volume as w1
+        mlp_w1_wp_volume = self.h * self.mlp_hidden_size / self.sp_scale * self.dtype_size
+        
+        qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
+        wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
+        mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
+        mlp_w2_wp_latency = self.mlp_w1_wp_latency
+        
+        wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
+        
+        return wp_comm_latency, sp_comm_latency
+    
+    
+    def communication(self, lins_scale, sp_scale, algo_type):
+        if algo_type == AlgoType.ISP:
+            return self.communication_isp(lins_scale, sp_scale)
+        elif algo_type == AlgoType.MSP:
+            return self.communication_msp(lins_scale, sp_scale)
+        elif algo_type == AlgoType.FSP:
+            return self.communication_fsp(lins_scale, sp_scale)
+        
