@@ -30,18 +30,18 @@ class TransformerOverlap:
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
         # 一个transformer layer的通信时延
-        comm_wp,comm_sp = TransformerCommunication(
+        comm_wp, comm_sp = TransformerCommunication(
             self.b, self.s, self.h, self.num_layers, self.vocab_size, dtype_size=self.dtype_size, mlp_ratio=self.mlp_ratio, multiple_of=self.multiple_of, cost_data=self.cost_data
         ).communication(self.lins_scale, self.sp_scale, algo_type)
         
         # 一个transformer layer的计算时延
-        comp_wp,comp_attn = TransformerComputation(
+        comp_wp, comp_attn = TransformerComputation(
             self.b, self.s, self.h, self.num_layers, self.vocab_size, dtype_size=self.dtype_size, mlp_ratio=self.mlp_ratio, multiple_of=self.multiple_of, cost_data=self.cost_data,sp_scale=self.sp_scale
         ).total_computation(algo_type)
         # print(f"comm:{comm}, comp:{comp}")
         # return comm - comp if comm > comp else 0
         # print(f"comm_wp:{comm_wp},comm_sp:{comm_sp},comp_wp:{comp_wp}, comp_attn:{comp_attn}")
-        return max(comm_wp, comp_wp)+comm_sp+comp_attn
+        return max(comm_wp, comp_wp) + comm_sp + comp_attn
 
 
 def main(args=None):

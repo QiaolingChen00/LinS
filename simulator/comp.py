@@ -22,99 +22,109 @@ class TransformerComputation:
         self.dtype_size = dtype_size
         self.mlp_ratio = mlp_ratio
         self.multiple_of = multiple_of
+        self.mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
         # self.comp = self.total_computation(num_layers, vocab_size)
 
     def get_linear_cost(self, complexity):
         return self.cost_data["linear"].predict(1, complexity)
-
-    def compute_attention_block(self):
-        # Calculate Q, K, V
-        # self.qkv_computation = 6 * self.b * self.s * self.h**2
-        self.qkv_computation_one_linear = self.dtype_size * 3 * self.b * self.s/self.sp_scale * self.h**2
-        self.qkv_computation_lat = self.get_linear_cost(self.qkv_computation_one_linear)
-
+    
+    def _compute_embedding(self, scale):
+        '''
+        the head computation is the same as embedding computation.
+        msp and fsp share the same computation.
+        
+        scale: the scale factor. when the algo is isp, the scale is one; else the scale is self.sp_scale.
+        '''
+        volumn = self.dtype_size * self.b * self.s * self.vocab_size * self.h / scale
+        latency = self.get_linear_cost(volumn)
+        return latency
+    
+    def _compute_linears(self, scale):
+        '''
+        compute the latency for linears in one transformer layer, such as wqkv, wo, mlp
+        '''
+        
+        # wqkv
+        # ISP: (b, s/sp, h) * (h, 3h)
+        # MSP or FSP: (b, s, h) * (h, 3h/sp)
+        qkv_volumn = 3 * self.dtype_size * self.b * self.s * self.h * self.h / self.sp_scale
+        qkv_latency = self.get_linear_cost(qkv_volumn)
+        
+        # wo
+        # ISP: (b, s/sp, h) * (h, h)
+        # MSP or FSP: (b, s, h/sp) * (h/sp, h)
+        wo_volumn = self.dtype_size * self.b * self.s * self.h * self.h / self.sp_scale 
+        wo_latency = self.get_linear_cost(wo_volumn)
+        
+        # mlp w1
+        # ISP: (b, s/sp, h) * (h, mlp_h)
+        # MSP or FSP: (b, s, h) * (h, mlp_h/sp)
+        w1_volumn = self.dtype_size * self.s * self.h * self.mlp_hidden_size / self.sp_scale
+        w1_latency = self.get_linear_cost(w1_volumn)
+        
+        # mlp w2
+        # ISP: (b, s/sp, h) * (h, mlp_h)
+        # MSP or FSP: (b, s, h/sp) * (h/sp, mlp_h)
+        w2_volumn = self.dtype_size * self.s * self.h * self.mlp_hidden_size / self.sp_scale
+        w2_latency = self.get_linear_cost(w2_volumn)
+        
+        
+        total_latency = qkv_latency + wo_latency + w1_latency + w2_latency
+        
+        return total_latency
+    
+    def _compute_attn(self):
+        '''
+        compute the latency for attention in one transformer layer
+        '''
         # QK^T matrix multiplication
-        # self.qkt_computation = 2 * self.b * self.s**2 * self.h
-        self.qkt_computation_one_linear = self.dtype_size * self.b * self.s**2 * self.h/self.sp_scale
-        self.qkt_computation_lat = self.get_linear_cost(self.qkt_computation_one_linear)
-
+        # (b, s, h/sp) * (b, s, h/sp)^T
+        qkt_volume = self.dtype_size * self.s * self.s * self.h / self.sp_scale
+        qkt_latency = self.get_linear_cost(qkt_volume)
+        
         # Score dot V
-        self.score_v_computation = self.qkt_computation  # Same as self.qkt_computation
-        self.score_v_computation_lat = self.get_linear_cost(self.score_v_computation)
-
-        # Linear mapping after attention
-        # self.post_attention_linear = 2 * self.b * self.s * self.h**2
-        self.post_attention_linear_one_linear = self.dtype_size * self.b * self.s/self.sp_scale * self.h**2
-        self.post_attention_linear_lat = self.get_linear_cost(self.post_attention_linear_one_linear)
-
-        # Total computation for attention block
-        # total_attention_computation = self.qkv_computation + self.qkt_computation + self.score_v_computation + self.post_attention_linear
-        total_attention_computation_lat = (
-            self.qkv_computation_lat
-            + self.post_attention_linear_lat
-        )
-
-        total_flash_attentino_computation_lat=(
-             self.qkt_computation_lat
-            + self.score_v_computation_lat)
-        return total_attention_computation_lat, total_flash_attentino_computation_lat
-
-    def compute_mlp_block(self):
-        # First linear layer
-        mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
-        self.first_linear = self.dtype_size  * self.b * self.s * mlp_hidden_size * self.h/self.sp_scale
-        self.first_linear_lat = self.get_linear_cost(self.first_linear)
-
-        # Second linear layer
-        self.second_linear = self.first_linear  # Same as self.first_linear
-
-        # Total computation for MLP block
-        # total_mlp_computation = self.first_linear + self.second_linear
-        return self.first_linear_lat * 2
-
-    def compute_logits(self):
-        # Logits computation
-        self.logits_computation = self.dtype_size * self.b * self.s * self.h * self.vocab_size
-        self.logits_computation_lat = self.get_linear_cost(self.logits_computation)
-        return self.logits_computation_lat
-    
-    def total_computation_isp(self):
-        # Compute total for each block
+        # (b, s, s) * (b, s, h/sp)
+        score_v_volume = self.dtype_size * self.s * self.s * self.h / self.sp_scale
+        score_v_latency = self.get_linear_cost(score_v_volume)
         
-        # xyt：attention_compuattion: wqkv and wo
-        # xyt: flash_attention_computation: actual attention computation
-        self.attention_computation,self.flash_attention_computation = self.compute_attention_block()
+        total_latency = qkt_latency + score_v_latency
         
-        
-        self.mlp_computation = self.compute_mlp_block()
-        
-        self.logits_computation = self.compute_logits()
+        return total_latency
 
-        # Total computation for one transformer layer
-        per_layer_computation = self.attention_computation + self.mlp_computation
+    def _computation(self, embedding_scale):
+        # TODO: the following computation exclude norm computation
+        '''
+        the computation latency for msp
         
-
-        # Total computation for all layers
-        total_computation = self.num_layers * per_layer_computation + 2 * self.logits_computation
-        total_flash_computation=self.num_layers * self.flash_attention_computation
+        compu(msp) = compu(forward) + compu(backward)
         
-        # 返回的是forward+backward；其中backward=forward*2
-        return 3 * total_computation, 3 * total_flash_computation
-
-    def total_computation_msp(self):
-        pass
-    
-    def total_computation_fsp(self):
-        pass
+        compu(backward) = 2 * compu(forward)
+        
+        compu(forward) = compu(embedding) + compu(linear, (wqkv, wo, mlp)) + compu(attn) + compu(head)
+        '''
+        
+        # compute the latency for embedding and head
+        embedding_latency = self._compute_embedding(embedding_scale)
+        head_latency = embedding_latency
+        
+        # compute the latency for linears
+        linears_latency = self._compute_linears()
+        
+        # compute the latency for attention
+        attn_latency = self._compute_attn()
+        
+        # the computation for each transformer layer
+        # transformer_latency = linears_latency + attn_latency
+        
+        return linears_latency, attn_latency
 
     def total_computation(self, algo_type):
         
         if algo_type == AlgoType.ISP:
-            return self.total_computation_isp()
-        elif algo_type == AlgoType.MSP:
-            return self.total_computation_msp()
-        elif algo_type == AlgoType.FSP():
-            return self.total_computation_fsp()
+            # return self.total_computation_isp()
+            return self._computation(1.0)
+        else:
+            return self._computation(self.sp_scale)
         
 
 
