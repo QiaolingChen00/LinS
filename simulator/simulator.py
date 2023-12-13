@@ -12,6 +12,8 @@ from simulator.overlap import TransformerOverlap
 # from utils.utils import _get_model_config
 from utils.common import *
 from utils.common import _79GB, SovlerType
+from simulator.algo import ISP, MSP, FSP
+from utils.common import AlgoType
 
 
 def get_model_config(model_size):
@@ -295,6 +297,19 @@ class ExternalRestraint:
                     layer_nums = self._l // pp
                     seq_len = self.seq_len // sp
                     pp_model_p_element = self._param_elements // pp
+
+                    if algo_type == AlgoType.ISP:
+                        self.algo = ISP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
+                    elif algo_type == AlgoType.MSP:
+                        self.algo = MSP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
+                    elif algo_type == AlgoType.FSP:
+                        self.algo = FSP(config=config, cost_data=self.cost_data, model_config=model_cfg, X=self._X, C=self._C, A=self._A, num_strategies=self._num_strategies)
+
+                    self._memory_threshold = self.algo.set_memory_threshold()
+                    self.algo.get_comm_cost()
+                    self.algo.get_mem_cost()
+                    self._X, self._C, self._A = self.algo.get_XCA()
+
 
                     overlap_res = TransformerOverlap(
                         b=self.dtype_size,

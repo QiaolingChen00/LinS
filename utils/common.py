@@ -15,6 +15,10 @@ class CostType:
     LINEAR = "linear"
     BROADCAST = "broadcast"
 
+class AlgoType:
+    ISP = "isp"
+    MSP = "msp"
+    FSP = "fsp"
 
 class SovlerType:
     MODEL = "model"
