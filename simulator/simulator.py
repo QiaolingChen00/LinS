@@ -66,7 +66,7 @@ class LinsSolution:
             f" sp: {self.sp}"
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
-            f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
+            f" algo_type: {self.algo_type}, wp_size: {8 *self.wp_size}, zp_size: {8 *self.zp_size}"
             f" zp_comm_cost: {self.zp_comm_cost*1000:.2f} ms, wp_comm_cost: {self.wp_comm_cost*1000:.2f} ms"
             f" total mem_cost: {self.mem_cost/GB:.2f} GB, zp_mm_cost: {self.zp_mm_cost/GB:.2f} GB, wp_mm_cost: {self.wp_mm_cost/GB:.2f} GB"
         )
