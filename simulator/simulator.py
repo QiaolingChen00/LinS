@@ -279,6 +279,8 @@ class ExternalRestraint:
         for pp in PPIter(self.world_size, self._l):
             for sp in SPIter(self.world_size // pp, self._a):
                 bs_bns = self.get_bsz(pp, sp, self.seq_len)
+                # the layer number should be updated
+                self.num_layer = self._l // pp
                 for micro_bsz, micro_num in bs_bns:
                     pp_model_p_element = self._param_elements // pp
                     for algo_type in self._algo_list:
@@ -295,8 +297,11 @@ class ExternalRestraint:
                                 model_size=self.model_size,
                                 sp_size=sp,
                                 pp_size=pp,
+                                world_size=self.world_size,
                                 cost_data=self.cost_data,
                                 ckpt=activation_ckpt,
+                                model_para=pp_model_p_element,
+                                num_layers=self.num_layer
                             )
                             mem_res = TransformerMemory(
                                 self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size, activation_ckpt

@@ -5,7 +5,7 @@ from simulator.ab_cost_model import get_comm_cost
 
 
 class TransformerCommunication:
-    def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None, ckpt=0):
+    def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None, ckpt=0, model_para=0, wdp_size=1):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -25,6 +25,8 @@ class TransformerCommunication:
         self.mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
         
         self.ckpt = ckpt # activation checkpoint
+        self.model_para = model_para
+        self.wdp_size = wdp_size
 
         # self.toal_comm = self.communication_isp()
 
@@ -44,6 +46,12 @@ class TransformerCommunication:
         if scale <= 1:
             return 0
         predict = get_comm_cost(SovlerType.MODEL, CostType.ALL2ALL, scale, volume)
+        return predict
+    
+    def allreduce(self, volume, scale):
+        if scale <= 1:
+            return 0
+        predict = get_comm_cost(SovlerType.MODEL, CostType.ALLREDUCE, scale, volume)
         return predict
 
     def communication_isp(self, lins_scale, sp_scale):
@@ -65,6 +73,8 @@ class TransformerCommunication:
         comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
         
         comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        
+        wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
         
         self.lins_scale = lins_scale
@@ -88,7 +98,11 @@ class TransformerCommunication:
         wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency
         sp_comm_latency = 4 * all2all_latency * (self.ckpt + 1) + 4 * all2all_latency # forward + backward
         
-        return wp_comm_latency, sp_comm_latency
+        # wdp communication
+        wdp_volume = self.model_para / lins_scale
+        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        
+        return wp_comm_latency, sp_comm_latency, wdp_latency
     
     def communication_msp(self, lins_scale, sp_scale):
         '''
@@ -109,6 +123,8 @@ class TransformerCommunication:
         comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
         
         comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        
+        wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
@@ -151,7 +167,11 @@ class TransformerCommunication:
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
-        return wp_comm_latency, sp_comm_latency
+        # wdp communication
+        wdp_volume = self.model_para // self.sp_scale // self.lins_scale
+        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        
+        return wp_comm_latency, sp_comm_latency, wdp_latency
     
     def communication_fsp(self, lins_scale, sp_scale):
         '''
@@ -172,6 +192,8 @@ class TransformerCommunication:
         comm(forward, wp) = comm(all_gather, (wqkv, wo, mlp))
         
         comm(backward, wp) = comm(all_gather, (wqkv, wo, mlp)) + comm(reduceScatter, (wqkv, wo, mlp))  
+        
+        wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
         self.lins_scale = lins_scale
         self.sp_scale = sp_scale
@@ -215,7 +237,11 @@ class TransformerCommunication:
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
-        return wp_comm_latency, sp_comm_latency
+        # wdp communication
+        wdp_volume = self.model_para // self.sp_scale // self.lins_scale
+        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        
+        return wp_comm_latency, sp_comm_latency, wdp_latency
     
     
     def communication(self, lins_scale, sp_scale, algo_type):
