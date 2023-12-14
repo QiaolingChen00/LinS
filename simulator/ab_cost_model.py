@@ -12,6 +12,8 @@ def coll_algo_bw(comm_op, size, n):
         return size * (n - 1) / n
     elif comm_op == CostType.BROADCAST:
         return size * (n - 1) / n
+    elif comm_op == CostType.P2P:
+        return size
 
     raise ValueError(f"unkonw comm_op: {comm_op}")
 
