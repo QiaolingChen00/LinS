@@ -14,6 +14,7 @@ class CostType:
     ALLGATHER = "all_gahter"
     LINEAR = "linear"
     BROADCAST = "broadcast"
+    P2P = "p2p"
 
 
 class AlgoType:

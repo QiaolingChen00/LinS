@@ -2,16 +2,74 @@ import math
 import pickle
 from math import log2
 
+import numpy as np
+
 # from z3 import *
 import z3
+
+from simulator.ab_cost_model import get_comm_cost
+from simulator.mem import TransformerMemory
+from simulator.overlap import TransformerOverlap
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
 from utils.common import _79GB, GB, AlgoType, CostType, SovlerType, get_model_config
 
-from simulator.ab_cost_model import get_comm_cost
-from simulator.mem import TransformerMemory
-from simulator.overlap import TransformerOverlap
+
+class LinsSolution:
+    def __init__(
+        self,
+        num_strategies,
+        pp,
+        sp,
+        micro_bsz,
+        micro_num,
+        mem_cost,
+        algo_type,
+        solution,
+        C,
+        A,
+        pp_cost,
+    ):
+        self.C = C
+        self.A = A
+        self.pp = pp
+        self.sp = sp
+        self.micro_bsz = micro_bsz
+        self.micro_num = micro_num
+        self.algo_type = algo_type
+        self.pp_cost = pp_cost
+        if solution is not None:
+            self.wp_size = int(np.array(list(range(num_strategies)))[np.array(solution[0], dtype="bool")])
+            self.zp_size = int(np.array(list(range(num_strategies)))[np.array(solution[2], dtype="bool")])
+            self.zp_comm_cost = self.C[2][self.zp_size]
+            self.wp_comm_cost = self.C[0][self.wp_size]
+            self.zp_mm_cost = self.A[2][self.zp_size]
+            self.wp_mm_cost = self.A[0][self.wp_size]
+            self.mem_cost = mem_cost
+
+        else:
+            self.wp_size = -1
+            self.zp_size = -1
+            self.zp_comm_cost = -1
+            self.wp_comm_cost = -1
+            self.zp_mm_cost = -1
+            self.wp_mm_cost = -1
+            self.mem_cost = -1
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        return (
+            f" pp: {self.pp}"
+            f" sp: {self.sp}"
+            f" micro_bsz: {self.micro_bsz}"
+            f" micro_num: {self.micro_num}"
+            f" algo_type: {self.algo_type}, wp_size: {8 *self.wp_size}, zp_size: {8 *self.zp_size}"
+            f" zp_comm_cost: {self.zp_comm_cost*1000:.2f} ms, wp_comm_cost: {self.wp_comm_cost*1000:.2f} ms"
+            f" total mem_cost: {self.mem_cost/GB:.2f} GB, zp_mm_cost: {self.zp_mm_cost/GB:.2f} GB, wp_mm_cost: {self.wp_mm_cost/GB:.2f} GB"
+        )
 
 
 class SPIter:
@@ -84,7 +142,7 @@ class Simulator:
         self.build_constraint()
         self.build_optimize_object()
         # self._solver.push()
-        min_cost, solution, re_mem_cost = None, None, None
+        min_comm_cost, solution, re_mem_cost = None, None, None
         while self._solver.check() == z3.sat:
             model = self._solver.model()
             # current_cost = model[self._total_comm_cost].as_long()
@@ -94,22 +152,14 @@ class Simulator:
             current_cost_value = float(current_cost_str.rstrip("?"))
             current_mem_cost_value = float(current_mem_cost_str.rstrip("?"))
 
-            if min_cost is None or current_cost_value < min_cost:
-                min_cost = current_cost_value
+            if min_comm_cost is None or current_cost_value < min_comm_cost:
+                min_comm_cost = current_cost_value
                 solution = [[model.evaluate(self._X[i][j]) for j in range(self._num_strategies)] for i in range(3)]
                 re_mem_cost = current_mem_cost_value
             # solver.add(self._total_comm_cost < current_cost)  # Add constraint to find lower cost
             self._solver.add(self._total_comm_cost < current_cost_value)
 
-        return min_cost, solution, re_mem_cost
-
-
-def get_cost(a):
-    return 1
-
-
-def get_p2p_cost(complexity):
-    return complexity // 100  # IB BW: 100GB/s
+        return min_comm_cost, solution, re_mem_cost
 
 
 class ExternalRestraint:
@@ -153,107 +203,78 @@ class ExternalRestraint:
         one_f_one_b_p2p_num = micro_num - 1
         cooldown_p2p_num = min(pp_size, micro_num)
 
-        p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * get_p2p_cost(buffer_size)
+        p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * get_comm_cost(
+            SovlerType.PP, CostType.P2P, 1, buffer_size
+        )
         return p2p_latency
 
-    def _comm_cost(self, i: int, j: int, overlap_res, model_p_element, algo_type) -> float:
+    def _comm_os_cost(self, lins_scale, model_p_element) -> float:
         """
-        Get communication cost.
-
-        Args:
-            i (int): p (i==0), g (i==1), os (i==2)
-            j (int): node count
-
-        Returns:
-            float: communication cost
-
-        commu cost = fwd + bwd + optimizer
-
-        fwd = sp + wp
-        bwd = sp + wp
-        optimizer = zp
-
-        其中 wp的通信可以overlap
+        切分OS引入的参数同步的通信开销
         """
-        if j != 0:
-            lins_scale = j * 8
-        else:
-            lins_scale = 1  # no comm cost
-
-        # 算overlap的通信开销
-        overlap_cost = overlap_res._get_overlap(lins_scale, algo_type)
-
         # 算os的通信开销
         if lins_scale == 1:
             os_comm_cost = 0
         else:
-            os_comm_cost = self._get_os_comm_cost(lins_scale, model_p_element)
+            os_comm_cost = get_comm_cost(
+                SovlerType.OS, CostType.BROADCAST, lins_scale, self.dtype_size * model_p_element
+            )
 
-        # 总的通信开销
-        comm_cost = os_comm_cost + overlap_cost
+        return os_comm_cost
 
-        return comm_cost
-
-    def _mem_cost(self, i, j, model_p_element):
+    def _mem_cost(self, i, j, sp_size, model_p_element, algo_type):
         if i == 0:
             if j == 0:
-                # 不切P
-                return self.dtype_size * model_p_element
+                # 不切P(无wp)
+                cost = 2 * self.dtype_size * model_p_element  # (P + G)
+                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                    return cost / sp_size
+                else:
+                    return cost
             else:
-                # 对P切j*8份
-                return self.dtype_size * model_p_element / (j * 8)
-        elif i == 1:
-            if j == 0:
-                # 不切G
-                return self.dtype_size * model_p_element
-            else:
-                # 对G切j*8份
-                return self.dtype_size * model_p_element / (j * 8)
-        else:
+                # 对P切j*8份(有wp)
+                cost = 2 * self.dtype_size * model_p_element / (j * 8)
+                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                    return cost / sp_size
+                else:
+                    return cost
+        elif i == 2:
             if j == 0:
                 # 不切OS
                 return self.dtype_size * self.fp32_ratio * 3 * model_p_element
             else:
                 # 对OS切j*8份
                 return self.dtype_size * self.fp32_ratio * 3 * model_p_element / (j * 8)
+        else:
+            return 0  # no cost
 
     def _get_comm_cost(self, num_strategies, overlap_res, model_p_element, algo_type):
         # 通信开销
         # P、G、OS切多少份对应的通信开销
         C = [[0 for _ in range(num_strategies)] for _ in range(3)]
         for i in range(3):
-            for j in range(num_strategies):
-                # TODO：这里需要支持更多的切分策略
-                C[i][j] = self._comm_cost(i, j, overlap_res, model_p_element, algo_type)
+            for j in range(num_strategies):  # TODO, 这里 wp 和 os 的搜索范围是一样的，严格来说应该分开
+                lins_scale = j * 8 if j != 0 else 1
+                if i == 0:
+                    # TODO：这里需要check下熊是不是认为j是节点数量而不是rank数量
+                    C[i][j] = overlap_res._get_overlap(lins_scale, algo_type)
+                elif i == 2:
+                    C[i][j] = self._comm_os_cost(lins_scale, model_p_element)
+                else:
+                    C[i][j] = 0  # 暂时不用
         return C
 
-    def _get_mem_cost(self, num_strategies, model_p_element):
+    def _get_mem_cost(self, num_strategies, sp_size, model_p_element, algo_type):
         # memory占用
         # P、G、OS切多少份对应的memory开销
         A = [[0 for _ in range(num_strategies)] for _ in range(3)]
         for i in range(3):
             for j in range(num_strategies):
-                A[i][j] = self._mem_cost(i, j, model_p_element)
+                A[i][j] = self._mem_cost(i, j, sp_size, model_p_element, algo_type)
         return A
 
-    def _get_os_comm_cost(self, comm_range, model_p_element):
-        if comm_range <= 1:
-            return 0
-        comm_volume = self.dtype_size * model_p_element
-        return get_comm_cost(SovlerType.OS, CostType.BROADCAST, comm_range, comm_volume)
-
-    def dump_constraint(self, C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num):
-        print(f"<<<<<<< pp:{pp}, sp:{sp} >>>>>>>>", flush=True)
-        print(f"C: {C}", flush=True)
-        print(f"A: {A}", flush=True)
-        print(
-            f"memory_threshold: {memory_threshold/ GB:.2f} GB, activation: {activation/ GB:.2f} GB, micro_bsz: {micro_bsz}, micro_num: {micro_num}",
-            flush=True,
-        )
-        print(f"<<<<<<<                  >>>>>>>>", flush=True)
-
     def run_loop(self):
-        min_cost = float("inf")
+        min_comm_cost = float("inf")
         min_cost_solution = None
         for pp in PPIter(self.world_size, self._l):
             for sp in SPIter(self.world_size // pp, self._a):
@@ -261,7 +282,11 @@ class ExternalRestraint:
                 for micro_bsz, micro_num in bs_bns:
                     pp_model_p_element = self._param_elements // pp
                     for algo_type in self._algo_list:
-                        for activation_ckpt in [0, 1]:  # the value should be {0, 1}
+                        for activation_ckpt in [
+                            0,
+                        ]:  # the value should be {0, 1}
+                            pp_comm_cost = self.pp_comm_overhead(pp, sp, self.seq_len, micro_bsz, micro_num, self._h)
+
                             overlap_res = TransformerOverlap(
                                 micro_bsz=micro_bsz,
                                 seq_len=self.seq_len,
@@ -279,19 +304,35 @@ class ExternalRestraint:
 
                             num_strategies = int(log2(self.world_size / 8)) + 2
                             C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)
-                            A = self._get_mem_cost(num_strategies, pp_model_p_element)
+                            A = self._get_mem_cost(num_strategies, sp, pp_model_p_element, algo_type)
                             memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
-                            self.dump_constraint(C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num)
                             simulator = Simulator(memory_threshold, num_strategies, C=C, A=A)
-                            cost, solution, mem_cost = simulator.run()
-                            print(f"min_cost: {cost}, solution:{solution}", flush=True)
-                            if cost is not None and cost < min_cost:
-                                min_cost = cost
-                                min_cost_solution = (pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution)
+                            comm_cost, solution, mem_cost = simulator.run()
+                            if comm_cost is not None:
+                                comm_cost += pp_comm_cost
+
+                            solu = LinsSolution(
+                                num_strategies,
+                                pp,
+                                sp,
+                                micro_bsz,
+                                micro_num,
+                                mem_cost,
+                                algo_type,
+                                solution,
+                                C,
+                                A,
+                                pp_comm_cost,
+                            )
+                            print(solu, flush=True)
+
+                            if comm_cost is not None and comm_cost < min_comm_cost:
+                                min_comm_cost = comm_cost
+                                min_cost_solution = solu
 
         if min_cost_solution is not None:
-            print("Minimum Communication Cost:", min_cost)
-            print("Solution:", min_cost_solution)
+            print("Minimum Communication Cost:", min_comm_cost)
+            print("Solution:", min_cost_solution, flush=True)
         else:
             print("No solution found")
