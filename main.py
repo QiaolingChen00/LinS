@@ -3,7 +3,7 @@ main package
 """
 import pickle
 
-from simulator.simulator import ExternalRestraint, Simulator
+from simulator.simulator import Constraint, Simulator
 from utils.config import Config
 
 
@@ -12,11 +12,9 @@ def main():
     config = Config(
         {
             "world_size": 32,
-            "global_batch_size": 4 * 1024**2,
-            "sequence_length": 16384,
+            "global_batch_size": 1 * (1024**2),
+            "sequence_length": 4 * 1024,
             "model_size": 7,
-            "micro_bs": 1,
-            "grad_acc": 1,
             "vocab_size": 103168,
             "dtype_size": 2,
         }
@@ -26,7 +24,7 @@ def main():
     with open(cost_data_path, "rb") as f:
         cost_data = pickle.load(f)
 
-    externl_sim = ExternalRestraint(
+    externl_sim = Constraint(
         config.world_size,
         config.global_batch_size,
         config.sequence_length,
