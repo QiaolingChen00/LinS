@@ -11,7 +11,7 @@ def main():
     """main function"""
     config = Config(
         {
-            "world_size": 128,
+            "world_size": 32,
             "global_batch_size": 4 * 1024**2,
             "sequence_length": 16384,
             "model_size": 7,
@@ -27,7 +27,11 @@ def main():
         cost_data = pickle.load(f)
 
     externl_sim = ExternalRestraint(
-        config.world_size, config.global_batch_size, config.sequence_length, config=config, cost_data=cost_data
+        config.world_size,
+        config.global_batch_size,
+        config.sequence_length,
+        config=config,
+        cost_data=cost_data,
     )
     externl_sim.run_loop()
 

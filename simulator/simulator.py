@@ -5,13 +5,13 @@ from math import log2
 # from z3 import *
 import z3
 
-from simulator.ab_cost_model import get_comm_cost
-from simulator.mem import TransformerMemory
-from simulator.overlap import TransformerOverlap
-
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
 from utils.common import _79GB, GB, AlgoType, CostType, SovlerType, get_model_config
+
+from simulator.ab_cost_model import get_comm_cost
+from simulator.mem import TransformerMemory
+from simulator.overlap import TransformerOverlap
 
 
 class SPIter:
@@ -129,7 +129,7 @@ class ExternalRestraint:
 
     def get_bsz(self, pp_size, sp_size, seq_len):
         num_tokens = self.global_bsz
-        dp_world_size = self.world_size // (pp_size + sp_size)
+        dp_world_size = self.world_size // pp_size // sp_size
         bsz = num_tokens // dp_world_size // seq_len
 
         micro_bsz_num = []
@@ -261,30 +261,34 @@ class ExternalRestraint:
                 for micro_bsz, micro_num in bs_bns:
                     pp_model_p_element = self._param_elements // pp
                     for algo_type in self._algo_list:
-                        overlap_res = TransformerOverlap(
-                            micro_bsz=micro_bsz,
-                            seq_len=self.seq_len,
-                            vocab_size=self.vocab_size,
-                            dtype_size=self.dtype_size,
-                            model_size=self.model_size,
-                            sp_size=sp,
-                            pp_size=pp,
-                            cost_data=self.cost_data,
-                        )
-                        mem_res = TransformerMemory(self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size)
+                        for activation_ckpt in [0, 1]:  # the value should be {0, 1}
+                            overlap_res = TransformerOverlap(
+                                micro_bsz=micro_bsz,
+                                seq_len=self.seq_len,
+                                vocab_size=self.vocab_size,
+                                dtype_size=self.dtype_size,
+                                model_size=self.model_size,
+                                sp_size=sp,
+                                pp_size=pp,
+                                cost_data=self.cost_data,
+                                ckpt=activation_ckpt,
+                            )
+                            mem_res = TransformerMemory(
+                                self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size, activation_ckpt
+                            )
 
-                        num_strategies = int(log2(self.world_size / 8)) + 2
-                        C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)
-                        A = self._get_mem_cost(num_strategies, pp_model_p_element)
-                        memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
+                            num_strategies = int(log2(self.world_size / 8)) + 2
+                            C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)
+                            A = self._get_mem_cost(num_strategies, pp_model_p_element)
+                            memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
-                        self.dump_constraint(C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num)
-                        simulator = Simulator(memory_threshold, num_strategies, C=C, A=A)
-                        cost, solution, mem_cost = simulator.run()
-                        print(f"min_cost: {cost}, solution:{solution}", flush=True)
-                        if cost is not None and cost < min_cost:
-                            min_cost = cost
-                            min_cost_solution = (pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution)
+                            self.dump_constraint(C, A, pp, sp, memory_threshold, activation, micro_bsz, micro_num)
+                            simulator = Simulator(memory_threshold, num_strategies, C=C, A=A)
+                            cost, solution, mem_cost = simulator.run()
+                            print(f"min_cost: {cost}, solution:{solution}", flush=True)
+                            if cost is not None and cost < min_cost:
+                                min_cost = cost
+                                min_cost_solution = (pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution)
 
         if min_cost_solution is not None:
             print("Minimum Communication Cost:", min_cost)

@@ -5,7 +5,7 @@ from simulator.ab_cost_model import get_comm_cost
 
 
 class TransformerCommunication:
-    def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None):
+    def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None, ckpt=0):
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -23,6 +23,8 @@ class TransformerCommunication:
         self.multiple_of = multiple_of
         self.dtype_size = dtype_size
         self.mlp_hidden_size = self.multiple_of * ((int(self.h * self.mlp_ratio)+ self.multiple_of - 1) // self.multiple_of) 
+        
+        self.ckpt = ckpt # activation checkpoint
 
         # self.toal_comm = self.communication_isp()
 
@@ -46,15 +48,17 @@ class TransformerCommunication:
 
     def communication_isp(self, lins_scale, sp_scale):
         '''
+        ckpt: means the activation checkpoint, {0 or 1}
+        
         sp communication:
         
         comm(sp) = comm(forward, sp) + comm(backward, sp)
         
-        comm(forward, sp) = 4 * comm(all2all, s/sp, b, h/sp)
+        comm(forward, sp) = 4 * comm(all2all, s/sp, b, h/sp) * (ckpt + 1)
 
         comm(backward, sp) = 4 * comm(all2all, s/sp, b, h/sp)
         
-        wp communication:
+        wp communication: (In our implementation, the wp communication of ckpt==1 is the same as ckpt==0)
         
         comm(wp) = comm(forwad, wp) + comm(backward, wp)
         
@@ -82,17 +86,19 @@ class TransformerCommunication:
         all2all_latency = self.alltoall(all2all_volume, self.sp_scale)
         
         wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency
-        sp_comm_latency = 8 * all2all_latency
+        sp_comm_latency = 4 * all2all_latency * (self.ckpt + 1) + 4 * all2all_latency # forward + backward
         
         return wp_comm_latency, sp_comm_latency
     
     def communication_msp(self, lins_scale, sp_scale):
         '''
+        ckpt: means the activation checkpoint, {0 or 1}
+        
         sp communication:
         
         comm(sp) = comm(forward, sp) + comm(backward, sp)
         
-        comm(forward, sp) = 2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)) * (ckpt + 1)
 
         comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
         
@@ -119,13 +125,17 @@ class TransformerCommunication:
         all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size
         
         # compute the sp latency (forward + backward)
-        qkv_sp_latency = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale)
-        wo_sp_latency = self.reducescatter(wo_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale)
-        mlp_w1_sp_latency = self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale)
-        mlp_w2_sp_latency = self.reducescatter(mlp_w2_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
-        all2all_sp_latency = 2 * 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
-
-        sp_comm_latency = qkv_sp_latency + wo_sp_latency + mlp_w1_sp_latency + mlp_w2_sp_latency + all2all_sp_latency
+        sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
+                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale) \
+                     + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+        
+        sp_backward = self.reducescatter(qkv_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale) \
+                      + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale) \
+                      + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+                      
+        sp_forward = sp_forward * (self.ckpt + 1)
+        
+        sp_comm_latency = sp_forward + sp_backward
         
         # commpute wp communication
         qkv_wp_volume = 3 * self.h * self.h / self.sp_scale * self.dtype_size
@@ -145,11 +155,13 @@ class TransformerCommunication:
     
     def communication_fsp(self, lins_scale, sp_scale):
         '''
+        ckpt: means the activation checkpoint, {0 or 1}
+        
         sp communication:
         
         comm(sp) = comm(forward, sp) + comm(backward, sp)
         
-        comm(forward, sp) = 2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)) * (ckpt + 1)
 
         comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
         
@@ -176,13 +188,18 @@ class TransformerCommunication:
         all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
         
         # compute the sp latency (forward + backward)
-        qkv_sp_latency = 2 * self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale)
-        wo_sp_latency = self.reducescatter(wo_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale)
-        mlp_w1_sp_latency = 2 * self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale)
-        mlp_w2_sp_latency = self.reducescatter(mlp_w2_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
-        all2all_sp_latency = 2 * 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
+        sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
+                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale) \
+                     + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+        
+        sp_backward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale) \
+                      + self.allgather(wo_sp_volume, self.sp_scale) \
+                      + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) \
+                      + self.allgather(mlp_w2_sp_volume, self.sp_scale) + 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
+        
+        sp_forward = sp_forward * (self.ckpt + 1)
 
-        sp_comm_latency = qkv_sp_latency + wo_sp_latency + mlp_w1_sp_latency + mlp_w2_sp_latency + all2all_sp_latency
+        sp_comm_latency = sp_forward + sp_backward
         
         # commpute wp communication
         qkv_wp_volume = 3 * self.h * self.h / self.sp_scale * self.dtype_size
