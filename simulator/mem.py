@@ -2,12 +2,13 @@ from utils.common import _79GB, AlgoType, get_model_config
 
 
 class TransformerMemory:
-    def __init__(self, dtype_size, pp_size, sp_size, micro_bsz, seq_len, model_size) -> None:
+    def __init__(self, dtype_size, pp_size, sp_size, micro_bsz, seq_len, model_size, ckpt) -> None:
         self._dtype_size = dtype_size
         self._micro_batch_size = micro_bsz
         self._sequence_length = seq_len
         self._SP = sp_size
         self._PP = pp_size
+        self.ckpt = ckpt
 
         self._h, self._a, self._l, self._mlp_ratio, self._multiple_of = get_model_config(model_size)
 
@@ -29,7 +30,7 @@ class TransformerMemory:
             * self._h
             * (34 + (5 * self._a * self._sequence_length / (self._h * self._SP)))
             / self._SP
-        ) * self._l  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
+        ) * self._l * (1 - self.ckpt)  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
         memory_threshold = _79GB - activation
         return memory_threshold, activation
 
@@ -41,7 +42,7 @@ class TransformerMemory:
             * self._h
             * (34 + (5 * self._a * self._sequence_length / (self._h * self._SP)))
             / self._SP
-        ) * self._l
+        ) * self._l * (1 - self.ckpt)
         memory_threshold = _79GB - activation
         return memory_threshold, activation
 
@@ -52,6 +53,6 @@ class TransformerMemory:
             * self._sequence_length
             * self._h
             * (4 + 30 / self._SP + (5 * self._a * self._sequence_length / self._h / self._SP))
-        ) * self._l
+        ) * self._l * (1 - self.ckpt)
         memory_threshold = _79GB - activation
         return memory_threshold, activation

@@ -113,7 +113,7 @@ def get_p2p_cost(complexity):
 
 
 class ExternalRestraint:
-    def __init__(self, world_size, global_bsz, seq_len, config, cost_data) -> None:
+    def __init__(self, world_size, global_bsz, seq_len, config, cost_data, activation_ckpt) -> None:
         self.world_size = world_size
         self.global_bsz = global_bsz  # 4
         self.seq_len = seq_len
@@ -126,10 +126,11 @@ class ExternalRestraint:
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
         self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
+        self.activation_ckpt = activation_ckpt # the value should be {0, 1}
 
     def get_bsz(self, pp_size, sp_size, seq_len):
         num_tokens = self.global_bsz
-        dp_world_size = self.world_size // (pp_size + sp_size)
+        dp_world_size = self.world_size // pp_size // sp_size
         bsz = num_tokens // dp_world_size // seq_len
 
         micro_bsz_num = []
@@ -270,8 +271,9 @@ class ExternalRestraint:
                             sp_size=sp,
                             pp_size=pp,
                             cost_data=self.cost_data,
+                            ckpt=self.activation_ckpt,
                         )
-                        mem_res = TransformerMemory(self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size)
+                        mem_res = TransformerMemory(self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size, self.activation_ckpt)
 
                         num_strategies = int(log2(self.world_size / 8)) + 2
                         C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)

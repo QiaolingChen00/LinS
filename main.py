@@ -19,6 +19,7 @@ def main():
             "grad_acc": 1,
             "vocab_size": 103168,
             "dtype_size": 2,
+            "activation_checkpoint": 0,
         }
     )
 
@@ -27,7 +28,7 @@ def main():
         cost_data = pickle.load(f)
 
     externl_sim = ExternalRestraint(
-        config.world_size, config.global_batch_size, config.sequence_length, config=config, cost_data=cost_data
+        config.world_size, config.global_batch_size, config.sequence_length, config=config, cost_data=cost_data, activation_ckpt=config.activation_checkpoint
     )
     externl_sim.run_loop()
 
