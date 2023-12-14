@@ -17,6 +17,7 @@ def main():
             "model_size": 7,
             "vocab_size": 103168,
             "dtype_size": 2,
+            "use_fa": 1,
         }
     )
 

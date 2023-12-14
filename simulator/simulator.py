@@ -17,7 +17,20 @@ from simulator.overlap import TransformerOverlap
 
 class LinsSolution:
     def __init__(
-        self, num_strategies, pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution, C, A, pp_cost, activation
+        self,
+        num_strategies,
+        pp,
+        sp,
+        micro_bsz,
+        micro_num,
+        mem_cost,
+        algo_type,
+        solution,
+        C,
+        A,
+        pp_cost,
+        activation,
+        comm_cost,
     ):
         self.C = C
         self.A = A
@@ -38,7 +51,9 @@ class LinsSolution:
             self.wp_mm_cost = self.A[0][self.wp_size]
             self.mem_cost = mem_cost
             self.total_mm_cost = self.mem_cost + self.activation
+            self.comm_cost = comm_cost
         else:
+            self.comm_cost = -1
             self.total_mm_cost = -1
             self.wp_size = -1
             self.zp_size = -1
@@ -58,7 +73,7 @@ class LinsSolution:
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
             f" algo_type: {self.algo_type}, wp_size: {8 *self.wp_size}, zp_size: {8 *self.zp_size}"
-            f" zp_comm_cost: {self.zp_comm_cost*1000:.2f} ms, wp_comm_cost: {self.wp_comm_cost*1000:.2f} ms"
+            f" total comm_cost: {self. comm_cost*1000:.2f} ms, pp_comm_cost: {self.pp_cost*1000:.2f} ms, zp_comm_cost: {self.zp_comm_cost*1000:.2f} ms, wp_comm_cost: {self.wp_comm_cost*1000:.2f} ms"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, activation: {self.activation/GB:.2f} GB, zp_mm_cost: {self.zp_mm_cost/GB:.2f} GB, wp_mm_cost: {self.wp_mm_cost/GB:.2f} GB"
         )
 
@@ -162,6 +177,7 @@ class Constraint:
         self.cost_data = cost_data
         self.model_size = config.model_size
         self.vocab_size = config.vocab_size
+        self.use_fa = config.use_fa
         self.fp32_ratio = 2
         self._param_elements = self.model_size * 10**9
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
@@ -187,6 +203,9 @@ class Constraint:
 
     def pp_comm_overhead(self, pp_size, sp_size, seq_len, micro_bsz, micro_num, hidden_size):
         """计算pp中p2p通信的延迟"""
+        if pp_size == 1:
+            return 0
+
         buffer_size = (
             self.dtype_size * seq_len * micro_bsz * self._h // sp_size
         )  # TODO:  这里的 hidden_size 是不是有问题，是不是需要考虑切TP的情况
@@ -239,7 +258,7 @@ class Constraint:
         else:
             return 0  # no cost
 
-    def _get_comm_cost(self, num_strategies, overlap_res, model_p_element, algo_type):
+    def _get_comm_cost(self, num_strategies, overlap_res, model_p_element, algo_type, micro_num):
         # 通信开销
         # P/G(wp + tp), OS切多少份对应的通信开销
         C = [[0 for _ in range(num_strategies)] for _ in range(3)]
@@ -248,7 +267,7 @@ class Constraint:
                 lins_scale = j * 8 if j != 0 else 1
                 if i == 0:
                     # TODO：这里需要check下熊是不是认为j是节点数量而不是rank数量
-                    C[i][j] = overlap_res._get_overlap(lins_scale, algo_type)
+                    C[i][j] = micro_num * overlap_res._get_overlap(lins_scale, algo_type)
                 elif i == 2:
                     C[i][j] = self._comm_os_cost(lins_scale, model_p_element)
                 else:
@@ -293,14 +312,21 @@ class Constraint:
                                 cost_data=self.cost_data,
                                 ckpt=activation_ckpt,
                                 model_para=pp_model_p_element,
-                                num_layers=self.num_layer
+                                num_layers=self.num_layer,
                             )
                             mem_res = TransformerMemory(
-                                self.dtype_size, pp, sp, micro_bsz, self.seq_len, self.model_size, activation_ckpt
+                                self.dtype_size,
+                                pp,
+                                sp,
+                                micro_bsz,
+                                self.seq_len,
+                                self.model_size,
+                                activation_ckpt,
+                                self.use_fa,
                             )
 
                             num_strategies = int(log2(self.world_size / 8)) + 2
-                            C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type)
+                            C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type, micro_num)
                             A = self._get_mem_cost(num_strategies, sp, pp_model_p_element, algo_type)
                             memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
@@ -322,6 +348,7 @@ class Constraint:
                                 A,
                                 pp_comm_cost,
                                 activation,
+                                comm_cost,
                             )
 
                             if comm_cost is not None:
@@ -329,10 +356,9 @@ class Constraint:
                                     min_comm_cost = comm_cost
                                     min_cost_solution = solu
                                 possible_solution.append(solu)
-                                print(solu, flush=True)
+                                print(f"solu: {solu}", flush=True)
                             else:
-                                print("no solu", flush=True)
-
+                                print(f"no-solu: {solu}", flush=True)
 
         if min_cost_solution is not None:
             print("Minimum Communication Cost:", min_comm_cost)
