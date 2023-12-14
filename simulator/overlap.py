@@ -28,7 +28,7 @@ class TransformerOverlap:
     def _get_overlap(self, lins_scale, algo_type):
         self.lins_scale = lins_scale
         wdp_size = self.world_size // self.lins_scale // self.pp_size
-        # 一个transformer layer的通信时延
+        # 一个transformer layer的通信时延 (forward + backward)
         comm_wp, comm_sp, comm_wdp = TransformerCommunication(
             self.b,
             self.s,
@@ -43,7 +43,7 @@ class TransformerOverlap:
             wdp_size=wdp_size,
         ).communication(self.lins_scale, self.sp_scale, algo_type)
 
-        # 一个transformer layer的计算时延
+        # 一个transformer layer的计算时延 (forward + backward)
         comp_wp, comp_attn = TransformerComputation(
             self.b,
             self.s,

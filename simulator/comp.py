@@ -112,10 +112,10 @@ class TransformerComputation:
         head_latency = embedding_latency
         
         # compute the latency for linears
-        linears_latency = self._compute_linears() * (self.ckpt + 1)
+        linears_latency = self._compute_linears() * (self.ckpt + 1) + self._compute_linears() * 2
         
         # compute the latency for attention
-        attn_latency = self._compute_attn() * (self.ckpt + 1)
+        attn_latency = self._compute_attn() * (self.ckpt + 1) + self._compute_attn() * 2
         
         # the computation for each transformer layer
         # transformer_latency = linears_latency + attn_latency
