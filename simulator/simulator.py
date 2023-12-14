@@ -40,9 +40,6 @@ class LinsSolution:
         self.algo_type = algo_type
         self.pp_cost = pp_cost
         if solution is not None:
-            # import pdb
-
-            # pdb.set_trace()
             self.wp_size = int(np.array(list(range(num_strategies)))[np.array(solution[0], dtype="bool")])
             self.zp_size = int(np.array(list(range(num_strategies)))[np.array(solution[2], dtype="bool")])
             self.zp_comm_cost = self.C[2][self.zp_size]
@@ -92,15 +89,6 @@ class PPIter:
     def __init__(self, gpu_nums, layer_nums):
         assert layer_nums % 2 == 0
         stop = int(math.log2(min(gpu_nums, layer_nums)))
-        self.num_list = [2**i for i in range(stop + 1)]
-
-    def __iter__(self):
-        return iter(self.num_list)
-
-
-class WPZPIter:
-    def __init__(self, gpu_nums):
-        stop = int(math.log2(gpu_nums))
         self.num_list = [2**i for i in range(stop + 1)]
 
     def __iter__(self):
