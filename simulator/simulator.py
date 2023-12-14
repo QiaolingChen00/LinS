@@ -3,33 +3,21 @@ import pickle
 from math import log2
 
 import numpy as np
-
 # from z3 import *
 import z3
+# from comm import TransformerCommunication
+# from utils.utils import _get_model_config
+from utils.common import (_79GB, GB, AlgoType, CostType, SovlerType,
+                          get_model_config)
 
 from simulator.ab_cost_model import get_comm_cost
 from simulator.mem import TransformerMemory
 from simulator.overlap import TransformerOverlap
 
-# from comm import TransformerCommunication
-# from utils.utils import _get_model_config
-from utils.common import _79GB, GB, AlgoType, CostType, SovlerType, get_model_config
-
 
 class LinsSolution:
     def __init__(
-        self,
-        num_strategies,
-        pp,
-        sp,
-        micro_bsz,
-        micro_num,
-        mem_cost,
-        algo_type,
-        solution,
-        C,
-        A,
-        pp_cost,
+        self, num_strategies, pp, sp, micro_bsz, micro_num, mem_cost, algo_type, solution, C, A, pp_cost, activation
     ):
         self.C = C
         self.A = A
@@ -39,7 +27,9 @@ class LinsSolution:
         self.micro_num = micro_num
         self.algo_type = algo_type
         self.pp_cost = pp_cost
+        self.activation = activation
         if solution is not None:
+            # TODO: wp_size 和 zp_size 现在还是(8, 16, 32, ..)这样的搜索空间，需要补充 2,4,6
             self.wp_size = int(np.array(list(range(num_strategies)))[np.array(solution[0], dtype="bool")])
             self.zp_size = int(np.array(list(range(num_strategies)))[np.array(solution[2], dtype="bool")])
             self.zp_comm_cost = self.C[2][self.zp_size]
@@ -47,8 +37,9 @@ class LinsSolution:
             self.zp_mm_cost = self.A[2][self.zp_size]
             self.wp_mm_cost = self.A[0][self.wp_size]
             self.mem_cost = mem_cost
-
+            self.total_mm_cost = self.mem_cost + self.activation
         else:
+            self.total_mm_cost = -1
             self.wp_size = -1
             self.zp_size = -1
             self.zp_comm_cost = -1
@@ -68,7 +59,7 @@ class LinsSolution:
             f" micro_num: {self.micro_num}"
             f" algo_type: {self.algo_type}, wp_size: {8 *self.wp_size}, zp_size: {8 *self.zp_size}"
             f" zp_comm_cost: {self.zp_comm_cost*1000:.2f} ms, wp_comm_cost: {self.wp_comm_cost*1000:.2f} ms"
-            f" total mem_cost: {self.mem_cost/GB:.2f} GB, zp_mm_cost: {self.zp_mm_cost/GB:.2f} GB, wp_mm_cost: {self.wp_mm_cost/GB:.2f} GB"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, activation: {self.activation/GB:.2f} GB, zp_mm_cost: {self.zp_mm_cost/GB:.2f} GB, wp_mm_cost: {self.wp_mm_cost/GB:.2f} GB"
         )
 
 
@@ -162,7 +153,7 @@ class Simulator:
         return min_comm_cost, solution, re_mem_cost
 
 
-class ExternalRestraint:
+class Constraint:
     def __init__(self, world_size, global_bsz, seq_len, config, cost_data) -> None:
         self.world_size = world_size
         self.global_bsz = global_bsz  # 4
@@ -250,7 +241,7 @@ class ExternalRestraint:
 
     def _get_comm_cost(self, num_strategies, overlap_res, model_p_element, algo_type):
         # 通信开销
-        # P、G、OS切多少份对应的通信开销
+        # P/G(wp + tp), OS切多少份对应的通信开销
         C = [[0 for _ in range(num_strategies)] for _ in range(3)]
         for i in range(3):
             for j in range(num_strategies):  # TODO, 这里 wp 和 os 的搜索范围是一样的，严格来说应该分开
@@ -266,7 +257,7 @@ class ExternalRestraint:
 
     def _get_mem_cost(self, num_strategies, sp_size, model_p_element, algo_type):
         # memory占用
-        # P、G、OS切多少份对应的memory开销
+        # P/G(wp + tp), OS切多少份对应的memory开销
         A = [[0 for _ in range(num_strategies)] for _ in range(3)]
         for i in range(3):
             for j in range(num_strategies):
@@ -276,6 +267,7 @@ class ExternalRestraint:
     def run_loop(self):
         min_comm_cost = float("inf")
         min_cost_solution = None
+        possible_solution = []
         for pp in PPIter(self.world_size, self._l):
             for sp in SPIter(self.world_size // pp, self._a):
                 bs_bns = self.get_bsz(pp, sp, self.seq_len)
@@ -324,12 +316,18 @@ class ExternalRestraint:
                                 C,
                                 A,
                                 pp_comm_cost,
+                                activation,
                             )
-                            print(solu, flush=True)
 
-                            if comm_cost is not None and comm_cost < min_comm_cost:
-                                min_comm_cost = comm_cost
-                                min_cost_solution = solu
+                            if comm_cost is not None:
+                                if comm_cost < min_comm_cost:
+                                    min_comm_cost = comm_cost
+                                    min_cost_solution = solu
+                                possible_solution.append(solu)
+                                print(solu, flush=True)
+                            else:
+                                print("no solu", flush=True)
+
 
         if min_cost_solution is not None:
             print("Minimum Communication Cost:", min_comm_cost)
