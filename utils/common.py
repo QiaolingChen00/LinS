@@ -23,14 +23,6 @@ class AlgoType:
     FSP = "fsp"
 
 
-class SovlerType:
-    MODEL = "model"
-    PP = "pp"
-    OS = "os"
-    P = "P"
-    G = "G"
-
-
 class BW:
     IB = 100 * 1024**3
     A800_NVL = 200 * 1024**3

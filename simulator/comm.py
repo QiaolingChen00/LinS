@@ -1,5 +1,7 @@
-from utils.common import AlgoType, CostType, SovlerType
+from utils.common import AlgoType, CostType
 from utils.utils import CommPredict
+from simulator.context import global_context as gpc
+from simulator.context import ParallelMode
 
 from simulator.ab_cost_model import get_comm_cost
 
@@ -33,25 +35,26 @@ class TransformerCommunication:
     def allgather(self, volume, scale):
         if scale <= 1:
             return 0
-        predict = get_comm_cost(SovlerType.MODEL, CostType.ALLGATHER, scale, volume)
+        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALLGATHER, scale, volume)
         return predict
 
     def reducescatter(self, volume, scale):
         if scale <= 1:
             return 0
-        predict = get_comm_cost(SovlerType.MODEL, CostType.REDUCESCATTER, scale, volume)
+        predict = get_comm_cost(ParallelMode.TENSOR, CostType.REDUCESCATTER, scale, volume)
         return predict
 
     def alltoall(self, volume, scale):
         if scale <= 1:
             return 0
-        predict = get_comm_cost(SovlerType.MODEL, CostType.ALL2ALL, scale, volume)
+        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALL2ALL, scale, volume)
         return predict
     
     def allreduce(self, volume, scale):
         if scale <= 1:
             return 0
-        predict = get_comm_cost(SovlerType.MODEL, CostType.ALLREDUCE, scale, volume)
+        # TODO, 这里可能传进来的是 WDP
+        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALLREDUCE, scale, volume)
         return predict
 
     def communication_isp(self, lins_scale, sp_scale):

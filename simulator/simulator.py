@@ -3,16 +3,19 @@ import pickle
 from math import log2
 
 import numpy as np
+
 # from z3 import *
 import z3
-# from comm import TransformerCommunication
-# from utils.utils import _get_model_config
-from utils.common import (_79GB, GB, AlgoType, CostType, SovlerType,
-                          get_model_config)
 
 from simulator.ab_cost_model import get_comm_cost
+from simulator.context import ParallelMode
+from simulator.context import global_context as gpc
 from simulator.mem import TransformerMemory
 from simulator.overlap import TransformerOverlap
+
+# from comm import TransformerCommunication
+# from utils.utils import _get_model_config
+from utils.common import _79GB, GB, AlgoType, CostType, get_model_config
 
 
 class LinsSolution:
@@ -130,7 +133,7 @@ class Simulator:
         self.set_memory_constraint_strict()
 
     def build_optimize_object(self):
-        self._total_comm_cost = z3.Real("total_comm_cost")
+        self._total_comm_cost = z3.Real("total_comm_cost")  # TODO： 实数->整数,不要小数
         self._total_mem_cost = z3.Real("total_mem_cost")
 
         self._communication_cost_expr = z3.Sum(
@@ -214,7 +217,7 @@ class Constraint:
         cooldown_p2p_num = min(pp_size, micro_num)
 
         p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * get_comm_cost(
-            SovlerType.PP, CostType.P2P, 1, buffer_size
+            ParallelMode.PIPELINE, CostType.P2P, 1, buffer_size
         )
         return p2p_latency
 
@@ -227,7 +230,7 @@ class Constraint:
             os_comm_cost = 0
         else:
             os_comm_cost = get_comm_cost(
-                SovlerType.OS, CostType.BROADCAST, lins_scale, self.dtype_size * model_p_element
+                ParallelMode.ZERO1, CostType.BROADCAST, lins_scale, self.dtype_size * model_p_element
             )
 
         return os_comm_cost
@@ -283,6 +286,20 @@ class Constraint:
                 A[i][j] = self._mem_cost(i, j, sp_size, model_p_element, algo_type)
         return A
 
+    def build_parallel_config(self, algo_type: AlgoType, world_size, pp, sp, wp, zp):
+        """TODO: add wdp"""
+        pipeline = dict(size=pp, interleaved_overlap=True)
+        tensor = sp if algo_type in [AlgoType.MSP, AlgoType.FSP] else 1
+        zero1 = dict(size=zp, fsdp=False)
+
+        parallel = dict(
+            zero1=zero1,  # zp
+            tensor=tensor,  # sp/tp
+            pipeline=dict(size=pp, interleaved_overlap=True),  # pp
+            sequence_parallel=sp > 1,
+        )
+        return {"parallel": parallel}
+
     def run_loop(self):
         min_comm_cost = float("inf")
         min_cost_solution = None
@@ -326,7 +343,9 @@ class Constraint:
                             )
 
                             num_strategies = int(log2(self.world_size / 8)) + 2
-                            C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type, micro_num)
+                            C = self._get_comm_cost(
+                                num_strategies, overlap_res, self._param_elements, algo_type, micro_num
+                            )
                             A = self._get_mem_cost(num_strategies, sp, pp_model_p_element, algo_type)
                             memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
