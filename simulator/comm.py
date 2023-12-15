@@ -115,9 +115,9 @@ class TransformerCommunication:
         
         comm(sp) = comm(forward, sp) + comm(backward, sp)
         
-        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)) * (ckpt + 1)
+        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
 
-        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s/sp, b, h)
         
         wp communication:
         
@@ -140,17 +140,12 @@ class TransformerCommunication:
         mlp_w1_sp_volume = qkv_sp_volume # the forward all-gather
         mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
-        # all2all
-        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size
-        
         # compute the sp latency (forward + backward)
         sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
-                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale) \
-                     + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale)
         
         sp_backward = self.reducescatter(qkv_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale) \
-                      + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale) \
-                      + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+                      + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
                       
         sp_forward = sp_forward * (self.ckpt + 1)
         
@@ -184,9 +179,9 @@ class TransformerCommunication:
         
         comm(sp) = comm(forward, sp) + comm(backward, sp)
         
-        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h) + 4 * comm(all2all, s/sp, b, h/sp)) * (ckpt + 1)
+        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
 
-        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s/sp, b, h) + 4 * comm(all2all, s/sp, b, h/sp)
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s/sp, b, h)
         
         wp communication:
         
@@ -209,18 +204,14 @@ class TransformerCommunication:
         mlp_w1_sp_volume = qkv_sp_volume # the forward all-gather
         mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
-        # all2all
-        all2all_sp_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
-        
         # compute the sp latency (forward + backward)
         sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
-                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale) \
-                     + 4 * self.alltoall(all2all_sp_volume, self.lins_scale)
+                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale)
         
         sp_backward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale) \
                       + self.allgather(wo_sp_volume, self.sp_scale) \
                       + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) \
-                      + self.allgather(mlp_w2_sp_volume, self.sp_scale) + 4 * self.alltoall(all2all_sp_volume, self.lins_scale) 
+                      + self.allgather(mlp_w2_sp_volume, self.sp_scale)
         
         sp_forward = sp_forward * (self.ckpt + 1)
 
