@@ -3,13 +3,12 @@ import pickle
 from math import log2
 
 import numpy as np
-
 # from z3 import *
 import z3
-
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _79GB, GB, AlgoType, CostType, SovlerType, get_model_config
+from utils.common import (_79GB, GB, AlgoType, CostType, SovlerType,
+                          get_model_config)
 
 from simulator.ab_cost_model import get_comm_cost
 from simulator.mem import TransformerMemory
@@ -313,6 +312,7 @@ class Constraint:
                                 cost_data=self.cost_data,
                                 ckpt=activation_ckpt,
                                 model_para=pp_model_p_element,
+                                num_layers=self.num_layer,
                             )
                             mem_res = TransformerMemory(
                                 self.dtype_size,
@@ -326,9 +326,7 @@ class Constraint:
                             )
 
                             num_strategies = int(log2(self.world_size / 8)) + 2
-                            C = self._get_comm_cost(
-                                num_strategies, overlap_res, self._param_elements, algo_type, micro_num
-                            )
+                            C = self._get_comm_cost(num_strategies, overlap_res, self._param_elements, algo_type, micro_num)
                             A = self._get_mem_cost(num_strategies, sp, pp_model_p_element, algo_type)
                             memory_threshold, activation = mem_res.get_memory_threshold(algo_type)
 
