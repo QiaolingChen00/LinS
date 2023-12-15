@@ -3,8 +3,9 @@ from utils.utils import CommPredict
 from simulator.context import global_context as gpc
 from simulator.context import ParallelMode
 
-from simulator.ab_cost_model import get_comm_cost
-
+from simulator.ab_cost_model import get_comm_cost, allgather, reducescatter, alltoall, allreduce
+from simulator.context import ParallelMode
+from simulator.context import global_context as gpc
 
 class TransformerCommunication:
     def __init__(self, b, s, h, num_layers, vocab_size, mlp_ratio, multiple_of, dtype_size, lins_scale=None, sp_scale=None, cost_data=None, ckpt=0, model_para=0, wdp_size=1):
@@ -32,32 +33,7 @@ class TransformerCommunication:
 
         # self.toal_comm = self.communication_isp()
 
-    def allgather(self, volume, scale):
-        if scale <= 1:
-            return 0
-        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALLGATHER, scale, volume)
-        return predict
-
-    def reducescatter(self, volume, scale):
-        if scale <= 1:
-            return 0
-        predict = get_comm_cost(ParallelMode.TENSOR, CostType.REDUCESCATTER, scale, volume)
-        return predict
-
-    def alltoall(self, volume, scale):
-        if scale <= 1:
-            return 0
-        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALL2ALL, scale, volume)
-        return predict
-    
-    def allreduce(self, volume, scale):
-        if scale <= 1:
-            return 0
-        # TODO, 这里可能传进来的是 WDP
-        predict = get_comm_cost(ParallelMode.TENSOR, CostType.ALLREDUCE, scale, volume)
-        return predict
-
-    def communication_isp(self, lins_scale, sp_scale):
+    def communication_isp(self, wp_scale, sp_scale):
         '''
         ckpt: means the activation checkpoint, {0 or 1}
         
@@ -80,34 +56,37 @@ class TransformerCommunication:
         wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
         
-        self.lins_scale = lins_scale
+        self.wp_scale = wp_scale
         self.sp_scale = sp_scale
-        
+
+        assert self.wp_scale == wp_scale
+        assert self.sp_scale == sp_scale
+
         # wp communication
         qkv_wp_volume = 3 * self.dtype_size * self.h ** 2
         wo_wp_volume = self.dtype_size * self.h ** 2
         mlp_w1_volume = self.dtype_size * self.h * self.mlp_hidden_size
         mlp_w2_volume = mlp_w1_volume
         
-        qkv_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
-        wo_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
-        mlp_w1_latency = 2 * self.allgather(mlp_w1_volume, self.lins_scale) + self.reducescatter(mlp_w1_volume, self.lins_scale)
+        qkv_latency = 2 * allgather(qkv_wp_volume, ParallelMode.WEIGHT) + reducescatter(qkv_wp_volume, ParallelMode.WEIGHT)
+        wo_latency = 2 * allgather(wo_wp_volume, ParallelMode.WEIGHT) + reducescatter(wo_wp_volume, ParallelMode.WEIGHT)
+        mlp_w1_latency = 2 * allgather(mlp_w1_volume, ParallelMode.WEIGHT) + reducescatter(mlp_w1_volume, ParallelMode.WEIGHT)
         mlp_w2_latency = mlp_w1_latency
         
         # sp communication
         all2all_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size 
-        all2all_latency = self.alltoall(all2all_volume, self.sp_scale)
-        
+        all2all_latency = alltoall(all2all_volume, ParallelMode.SEQUENCE)
+
         wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency
         sp_comm_latency = 4 * all2all_latency * (self.ckpt + 1) + 4 * all2all_latency # forward + backward
         
         # wdp communication
-        wdp_volume = self.model_para / lins_scale
-        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        wdp_volume = self.model_para / wp_scale   # TODO: 这个通信量是否合理?
+        wdp_latency = allreduce(wdp_volume,  ParallelMode.WEIGHT_DATA)
         
         return wp_comm_latency, sp_comm_latency, wdp_latency
     
-    def communication_msp(self, lins_scale, sp_scale):
+    def communication_msp(self, wp_scale, sp_scale):
         '''
         ckpt: means the activation checkpoint, {0 or 1}
         
@@ -129,8 +108,11 @@ class TransformerCommunication:
         
         wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
-        self.lins_scale = lins_scale
-        self.sp_scale = sp_scale
+        self.wp_scale = gpc.get_world_size(ParallelMode.WEIGHT)
+        self.sp_scale = gpc.get_world_size(ParallelMode.SEQUENCE)
+
+        assert self.wp_scale == wp_scale
+        assert self.sp_scale == sp_scale
 
         # compute sp communication
         # all_gather and reduceScatter have the same commu volume
@@ -141,11 +123,11 @@ class TransformerCommunication:
         mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
         # compute the sp latency (forward + backward)
-        sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
-                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale)
+        sp_forward = allgather(qkv_sp_volume, ParallelMode.SEQUENCE) + reducescatter(wo_sp_volume, ParallelMode.SEQUENCE) \
+                     + allgather(mlp_w1_sp_volume, ParallelMode.SEQUENCE) + reducescatter(mlp_w2_sp_volume, ParallelMode.SEQUENCE)
         
-        sp_backward = self.reducescatter(qkv_sp_volume, self.sp_scale) + self.allgather(wo_sp_volume, self.sp_scale) \
-                      + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) + self.allgather(mlp_w2_sp_volume, self.sp_scale)
+        sp_backward = reducescatter(qkv_sp_volume, ParallelMode.SEQUENCE) + allgather(wo_sp_volume, ParallelMode.SEQUENCE) \
+                      + reducescatter(mlp_w1_sp_volume, ParallelMode.SEQUENCE) + allgather(mlp_w2_sp_volume, ParallelMode.SEQUENCE)
                       
         sp_forward = sp_forward * (self.ckpt + 1)
         
@@ -158,20 +140,20 @@ class TransformerCommunication:
         # w2 and w3 have the same volume as w1
         mlp_w1_wp_volume = self.h * self.mlp_hidden_size / self.sp_scale * self.dtype_size
         
-        qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
-        wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
-        mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
+        qkv_wp_latency = 2 * allgather(qkv_wp_volume, ParallelMode.WEIGHT) + reducescatter(qkv_wp_volume, ParallelMode.WEIGHT)
+        wo_wp_latency = 2 * allgather(wo_wp_volume, ParallelMode.WEIGHT) + reducescatter(wo_wp_volume, ParallelMode.WEIGHT)
+        mlp_w1_wp_latency = 2 * allgather(mlp_w1_wp_volume, ParallelMode.WEIGHT) + reducescatter(mlp_w1_wp_volume, ParallelMode.WEIGHT)
         mlp_w2_wp_latency = mlp_w1_wp_latency
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
         # wdp communication
-        wdp_volume = self.model_para // self.sp_scale // self.lins_scale
-        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        wdp_volume = self.model_para // self.sp_scale // self.wp_scale   # TODO: 这个通信量是否合理? 
+        wdp_latency = allreduce(wdp_volume, ParallelMode.WEIGHT_DATA)
         
         return wp_comm_latency, sp_comm_latency, wdp_latency
     
-    def communication_fsp(self, lins_scale, sp_scale):
+    def communication_fsp(self, wp_scale, sp_scale):
         '''
         ckpt: means the activation checkpoint, {0 or 1}
         
@@ -193,8 +175,12 @@ class TransformerCommunication:
         
         wdp communication: (actually wdp communication should be included in the optimizer communication)
         '''
-        self.lins_scale = lins_scale
-        self.sp_scale = sp_scale
+        
+        self.wp_scale = gpc.get_world_size(ParallelMode.WEIGHT)
+        self.sp_scale = gpc.get_world_size(ParallelMode.SEQUENCE)
+
+        assert self.wp_scale == wp_scale
+        assert self.sp_scale == sp_scale
 
         # compute sp communication
         # all_gather and reduceScatter have the same commu volume
@@ -205,13 +191,13 @@ class TransformerCommunication:
         mlp_w2_sp_volume = self.s * self.b * self.h * self.dtype_size # the forward reduceScatter
         
         # compute the sp latency (forward + backward)
-        sp_forward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(wo_sp_volume, self.sp_scale) \
-                     + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w2_sp_volume, self.sp_scale)
+        sp_forward = allgather(qkv_sp_volume, ParallelMode.SEQUENCE) + reducescatter(wo_sp_volume, ParallelMode.SEQUENCE) \
+                     + allgather(mlp_w1_sp_volume, ParallelMode.SEQUENCE) + reducescatter(mlp_w2_sp_volume, ParallelMode.SEQUENCE)
         
-        sp_backward = self.allgather(qkv_sp_volume, self.sp_scale) + self.reducescatter(qkv_sp_volume, self.sp_scale) \
-                      + self.allgather(wo_sp_volume, self.sp_scale) \
-                      + self.allgather(mlp_w1_sp_volume, self.sp_scale) + self.reducescatter(mlp_w1_sp_volume, self.sp_scale) \
-                      + self.allgather(mlp_w2_sp_volume, self.sp_scale)
+        sp_backward = allgather(qkv_sp_volume, ParallelMode.SEQUENCE) + reducescatter(qkv_sp_volume, ParallelMode.SEQUENCE) \
+                      + allgather(wo_sp_volume, ParallelMode.SEQUENCE) \
+                      + allgather(mlp_w1_sp_volume, ParallelMode.SEQUENCE) + reducescatter(mlp_w1_sp_volume, ParallelMode.SEQUENCE) \
+                      + allgather(mlp_w2_sp_volume, ParallelMode.SEQUENCE)
         
         sp_forward = sp_forward * (self.ckpt + 1)
 
@@ -224,26 +210,26 @@ class TransformerCommunication:
         # w2 and w3 have the same volume as w1
         mlp_w1_wp_volume = self.h * self.mlp_hidden_size / self.sp_scale * self.dtype_size
         
-        qkv_wp_latency = 2 * self.allgather(qkv_wp_volume, self.lins_scale) + self.reducescatter(qkv_wp_volume, self.lins_scale)
-        wo_wp_latency = 2 * self.allgather(wo_wp_volume, self.lins_scale) + self.reducescatter(wo_wp_volume, self.lins_scale)
-        mlp_w1_wp_latency = 2 * self.allgather(mlp_w1_wp_volume, self.lins_scale) + self.reducescatter(mlp_w1_wp_volume, self.lins_scale)
+        qkv_wp_latency = 2 * allgather(qkv_wp_volume, ParallelMode.WEIGHT) + reducescatter(qkv_wp_volume, ParallelMode.WEIGHT)
+        wo_wp_latency = 2 * allgather(wo_wp_volume, ParallelMode.WEIGHT) + reducescatter(wo_wp_volume, ParallelMode.WEIGHT)
+        mlp_w1_wp_latency = 2 * allgather(mlp_w1_wp_volume, ParallelMode.WEIGHT) + reducescatter(mlp_w1_wp_volume, ParallelMode.WEIGHT)
         mlp_w2_wp_latency = mlp_w1_wp_latency
         
         wp_comm_latency = qkv_wp_latency + wo_wp_latency + mlp_w1_wp_latency + mlp_w2_wp_latency
         
         # wdp communication
-        wdp_volume = self.model_para // self.sp_scale // self.lins_scale
-        wdp_latency = self.allreduce(wdp_volume, self.wdp_size)
+        wdp_volume = self.model_para // self.sp_scale // self.wp_scale    # TODO: 这个通信量是否合理?
+        wdp_latency = allreduce(wdp_volume, ParallelMode.WEIGHT_DATA)
         
         return wp_comm_latency, sp_comm_latency, wdp_latency
     
     
-    def communication(self, lins_scale, sp_scale, algo_type):
+    def communication(self, wp_scale, sp_scale, algo_type):
         if algo_type == AlgoType.ISP:
-            return self.communication_isp(lins_scale, sp_scale)
+            return self.communication_isp(wp_scale, sp_scale)
         elif algo_type == AlgoType.MSP:
-            return self.communication_msp(lins_scale, sp_scale)
+            return self.communication_msp(wp_scale, sp_scale)
         elif algo_type == AlgoType.FSP:
-            return self.communication_fsp(lins_scale, sp_scale)
+            return self.communication_fsp(wp_scale, sp_scale)
         raise ValueError(f"Unkoen algo_type: {algo_type}")
         

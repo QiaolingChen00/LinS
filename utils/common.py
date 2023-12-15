@@ -18,9 +18,10 @@ class CostType:
 
 
 class AlgoType:
-    ISP = "isp"
-    MSP = "msp"
-    FSP = "fsp"
+    ISP = "intern"
+    MSP = "megatron"
+    FSP = "flash-attn"
+    NONE = "none"
 
 
 class BW:
@@ -43,7 +44,7 @@ MS = 1000
 US = 1000 * MS
 
 _79GB = 79 * GB
-
+_100GB = 100 * GB
 
 def get_model_config(model_size):
     if model_size == 7:

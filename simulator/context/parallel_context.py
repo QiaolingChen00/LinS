@@ -30,7 +30,6 @@ IS_SEQUENCE_PARALLEL = "is_sequence_parallel"
 # logger = get_logger(__file__)
 logger = print
 
-
 class ParallelContext:
     """This class provides interface functions for users to get the parallel context,
     such as the global rank, the local rank, the world size, etc. of each device.
@@ -61,6 +60,7 @@ class ParallelContext:
         self.virtual_pipeline_parallel_size = None
         self.virtual_pipeline_parallel_rank = None
         self._expert_parallel_group_names = []
+
 
     @property
     def config(self):
@@ -322,11 +322,11 @@ class ParallelContext:
         pps = self.pipeline_parallel_size
         tps = self.tensor_parallel_size
         ws = self.world_size
-        assert ws == dps * pps * tps, (
-            f"Expected the world size {ws} to be equal to data"
-            f" parallel size ({dps}) * pipeline parallel size "
-            f"({pps}) * tensor parallel size ({tps})"
-        )
+        # assert ws == dps * pps * tps, (
+        #     f"Expected the world size {ws} to be equal to data"
+        #     f" parallel size ({dps}) * pipeline parallel size "
+        #     f"({pps}) * tensor parallel size ({tps})"
+        # )
         assert self.zero1_parallel_size > 0
         assert self.data_parallel_size % self.zero1_parallel_size == 0
 
@@ -363,19 +363,22 @@ class ParallelContext:
         # set parallel size as attributes for global context
         parallel_config = self.config.get("parallel", None)
         if parallel_config is not None:
+            self._set_parallel_size_from_config(parallel_config, "weight", "weight_parallel_size")
+            self._set_parallel_size_from_config(parallel_config, "sequence", "sequence_parallel_size")
             self._set_parallel_size_from_config(parallel_config, "pipeline", "pipeline_parallel_size")
             self._set_parallel_size_from_config(parallel_config, "tensor", "tensor_parallel_size")
             self._set_parallel_size_from_config(parallel_config, "zero1", "zero1_parallel_size")
 
         # the user should not set the data parallel size manually
         # instead, it should be calculated based on other parallel config
-        self.data_parallel_size = self.world_size // (self.pipeline_parallel_size * self.tensor_parallel_size)
+        assert self.tensor_parallel_size == 1
+        assert self.pipeline_parallel_size == 1
+        assert self.zero1_parallel_size >= 1
+        self.data_parallel_size = self.world_size // self.sequence_parallel_size
+        self.weight_data_parallel_size = self.world_size // self.weight_parallel_size
 
         # the recommended nettest_parallel_size is 32 GPUs
         self.nettest_parallel_size = 32
-
-        if self.zero1_parallel_size <= 0:
-            self.zero1_parallel_size = self.data_parallel_size
 
         # assert (
         #     self.data_parallel_size % self.config.model.get("num_experts", 1) == 0
@@ -386,12 +389,13 @@ class ParallelContext:
         # than data_parallel_size, set expert_parallel_size to be the number of experts to make sure each device
         # has one expert.
         self.expert_parallel_size = 1
-
         self.check_sanity()
 
         initializer_args = [
             rank,
             world_size,
+            self.weight_parallel_size,
+            self.sequence_parallel_size,
             self.data_parallel_size,
             self.pipeline_parallel_size,
             self.tensor_parallel_size,
@@ -402,7 +406,10 @@ class ParallelContext:
 
         # run initialization of different process groups
         initializers = []
+        initializers.append(pgroup_initializer.Initializer_Weight(*initializer_args))
+        initializers.append(pgroup_initializer.Initializer_Sequence(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Data(*initializer_args))
+        initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Model(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Zero1(*initializer_args))
@@ -421,6 +428,7 @@ class ParallelContext:
             else:
                 self._register_dist(*parallel_setting)
 
+
     def is_initialized(self, parallel_mode: ParallelMode):
         """Returns a boolean value indicating whether `parallel_mode` is initialized
         in the current system.
@@ -434,13 +442,18 @@ class ParallelContext:
         self.virtual_pipeline_parallel_rank = rank
     
     def check_pg_is_intra(self, parallel_mode: ParallelMode):
-        pg_group_ranks = gpc.get_ranks_in_group(parallel_mode)
+        pg_group_ranks = self.get_ranks_in_group(parallel_mode)
         if len(pg_group_ranks) > 8:
             return False
         else:
             min_rank = min(pg_group_ranks)
             max_rank = max(pg_group_ranks)
             return (max_rank - min_rank) <=7
+
+    def destroy(self):
+        """Destroys the current distributed parallel environment."""
+        # destroy global process group
+        self._groups.clear()
 
 
 global_context = ParallelContext()

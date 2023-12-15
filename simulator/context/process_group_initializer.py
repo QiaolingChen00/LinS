@@ -9,6 +9,8 @@ from enum import Enum
 
 import torch.distributed as dist
 
+# from internlm.utils.timeout import LLM_NCCL_TIMEOUT
+
 
 # parallel modes
 class ParallelMode(Enum):
@@ -49,6 +51,15 @@ class ParallelMode(Enum):
     # dummy mode, only used during mode construction
     DUMMY = "dummy"
 
+    # weight parallel
+    WEIGHT = "weight"
+
+    # weight data parallel
+    WEIGHT_DATA = "weight_data"
+
+    # sequence parallel
+    SEQUENCE = "sequence"
+
 
 class ProcessGroupInitializer(ABC):
     """An object, knowing the parallelism configuration, that initializes parallel groups.
@@ -67,6 +78,8 @@ class ProcessGroupInitializer(ABC):
         self,
         rank: int,
         world_size: int,
+        weight_parallel_size: int,
+        sequence_parallel_size: int,
         data_parallel_size: int,
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
@@ -76,6 +89,8 @@ class ProcessGroupInitializer(ABC):
     ):
         self.rank = rank
         self.world_size = world_size
+        self.weight_parallel_size = weight_parallel_size
+        self.sequence_parallel_size = sequence_parallel_size
         self.data_parallel_size = data_parallel_size
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
@@ -89,63 +104,63 @@ class ProcessGroupInitializer(ABC):
         pass
 
 
-class Initializer_Data(ProcessGroupInitializer):
-    """A ProcessGroupInitializer for data parallelism.
+# class Initializer_Data(ProcessGroupInitializer):
+#     """A ProcessGroupInitializer for data parallelism.
 
-    Args:
-        rank (int): The rank of current process.
-        world_size (int): Size of whole communication world.
-        data_parallel_size (int): Size of data parallel.
-        pipeline_parallel_size (int): Size of pipeline parallel.
-        tensor_parallel_size (int): Size of tensor parallel.
-        zero1_parallel_size (int): Size of zero1 parallel.
-        expert_parallel_size (int): Size of expert parallel.
-    """
+#     Args:
+#         rank (int): The rank of current process.
+#         world_size (int): Size of whole communication world.
+#         data_parallel_size (int): Size of data parallel.
+#         pipeline_parallel_size (int): Size of pipeline parallel.
+#         tensor_parallel_size (int): Size of tensor parallel.
+#         zero1_parallel_size (int): Size of zero1 parallel.
+#         expert_parallel_size (int): Size of expert parallel.
+#     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.rank_num_per_dp_group = self.world_size // self.data_parallel_size
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.rank_num_per_dp_group = self.world_size // self.data_parallel_size
 
-        assert self.world_size % self.data_parallel_size == 0
+#         assert self.world_size % self.data_parallel_size == 0
 
-    def init_dist_group(self, use_cpu: bool = False):
-        """Initialize data parallel groups, and assign local_ranks and groups to each gpu.
+#     def init_dist_group(self, use_cpu: bool = False):
+#         """Initialize data parallel groups, and assign local_ranks and groups to each gpu.
 
-        Returns:
-            Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
-                A Data parallelism's information tuple.
-        """
-        local_rank = None
-        ranks_in_group = None
-        process_group = None
-        cpu_group = None
-        group_world_size = None
-        mode = ParallelMode.DATA
+#         Returns:
+#             Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
+#                 A Data parallelism's information tuple.
+#         """
+#         local_rank = None
+#         ranks_in_group = None
+#         process_group = None
+#         cpu_group = None
+#         group_world_size = None
+#         mode = ParallelMode.DATA
 
-        for i in range(self.rank_num_per_dp_group):
-            ranks = [i + j * self.rank_num_per_dp_group for j in range(self.data_parallel_size)]
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+#         for i in range(self.rank_num_per_dp_group):
+#             ranks = [i + j * self.rank_num_per_dp_group for j in range(self.data_parallel_size)]
+#             group = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
+#             if use_cpu:
+#                 group_cpu = (
+#                     dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
+#                     if dist.get_backend() != "gloo"
+#                     else group
+#                 )
+#             else:
+#                 group_cpu = None
 
-            if self.rank in ranks:
-                local_rank = ranks.index(self.rank)
-                group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
-                ranks_in_group = ranks
+#             if self.rank in ranks:
+#                 local_rank = ranks.index(self.rank)
+#                 group_world_size = len(ranks)
+#                 process_group = group
+#                 cpu_group = group_cpu
+#                 ranks_in_group = ranks
 
-        return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
+#         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
 
 
 class Initializer_Model(ProcessGroupInitializer):
-    """A ProcessGroupInitializer for model parallelism (model parallel None contains pipeline and tensor parallel
+    """A ProcessGroupInitializer for model parallelism (model parallel group contains pipeline and tensor parallel
     groups).
 
     Args:
@@ -181,21 +196,13 @@ class Initializer_Model(ProcessGroupInitializer):
 
         for i in range(self.num_group):
             ranks = [i * self.rank_num_per_group + j for j in range(self.rank_num_per_group)]
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
 
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -247,20 +254,20 @@ class Initializer_Pipeline(ProcessGroupInitializer):
                 )
                 pipe_group_size = len(ranks)
                 pipe_group = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-                # if use_cpu:
-                #     None = (
-                #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-                #         if dist.get_backend() != "gloo"
-                #         else pipe_group
-                #     )
-                # else:
-                #     None = None
+                if use_cpu:
+                    group_cpu = (
+                        dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
+                        if dist.get_backend() != "gloo"
+                        else pipe_group
+                    )
+                else:
+                    group_cpu = None
 
                 if self.rank in ranks:
                     local_rank = ranks.index(self.rank)
                     group_world_size = pipe_group_size
                     process_group = pipe_group
-                    cpu_group = None
+                    cpu_group = group_cpu
                     ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -301,21 +308,13 @@ class Initializer_Tensor(ProcessGroupInitializer):
 
         for i in range(self.num_tensor_parallel_group):
             ranks = [i * self.tensor_parallel_size + j for j in range(self.tensor_parallel_size)]
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
 
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -327,6 +326,8 @@ class Initializer_Zero1(ProcessGroupInitializer):
     Args:
         rank (int): The rank of current process.
         world_size (int): Size of whole communication world.
+        weight_parallel_size (int): Size of model weight parallel.
+        sequence_parallel_size (int): Size of data sequence parallel.
         data_parallel_size (int): Size of data parallel.
         pipeline_parallel_size (int): Size of pipeline parallel.
         tensor_parallel_size (int): Size of tensor parallel.
@@ -336,11 +337,12 @@ class Initializer_Zero1(ProcessGroupInitializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.rank_num_per_dp_group = self.world_size // self.data_parallel_size
-        self.num_zero1_parallel_group = self.data_parallel_size // self.zero1_parallel_size
+        self.num_zero1_parallel_group = self.world_size // self.zero1_parallel_size
+        self.weight_zero1_size = self.weight_parallel_size * self.zero1_parallel_size
+        self.num_weight_zero1_parallel_group = self.world_size // self.weight_zero1_size
 
-        assert self.world_size % self.data_parallel_size == 0
         assert self.world_size % self.zero1_parallel_size == 0
+        assert self.world_size % self.weight_zero1_size == 0
 
     def init_dist_group(self, use_cpu: bool = False):
         """Initialize zero1 parallel groups, and assign local_ranks and groups to each gpu.
@@ -348,6 +350,11 @@ class Initializer_Zero1(ProcessGroupInitializer):
         Returns:
             Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
                 A zero1 parallelism's information tuple.
+
+        n=32 wp=8 sp=4 zo1=2
+        wp grops: [0-7] [8-15] [16-23] [24-31]
+        zo1 groups: [0,8] [1,9] [2,10] [3,11] [4,12] [5,13] [6,14] [7,15]
+                    [16,24] [17,25] [18,26] [19,27] [20,28] [21,29] [22,30] [23,31]
         """
         local_rank = None
         ranks_in_group = None
@@ -356,27 +363,19 @@ class Initializer_Zero1(ProcessGroupInitializer):
         group_world_size = None
         mode = ParallelMode.ZERO1
 
-        for i in range(self.rank_num_per_dp_group):
-            for j in range(self.num_zero1_parallel_group):
+        for i in range(self.num_weight_zero1_parallel_group):
+            for j in range(self.weight_parallel_size):
                 ranks = [
-                    i + (j * self.zero1_parallel_size + k) * self.rank_num_per_dp_group
+                    i * self.weight_zero1_size + j + k * self.weight_parallel_size
                     for k in range(self.zero1_parallel_size)
                 ]
-                # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-                # if use_cpu:
-                #     None = (
-                #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-                #         if dist.get_backend() != "gloo"
-                #         else None
-                #     )
-                # else:
-                #     None = None
+                group_cpu, group = None, None
 
                 if self.rank in ranks:
                     local_rank = ranks.index(self.rank)
                     group_world_size = len(ranks)
-                    process_group = None
-                    cpu_group = None
+                    process_group = group
+                    cpu_group = group_cpu
                     ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -388,7 +387,7 @@ class Initializer_Nettest(ProcessGroupInitializer):
     Args:
         rank (int): The rank of current process.
         world_size (int): Size of whole communication world.
-        nettest_parallel_size (int): Size of a network test None.
+        nettest_parallel_size (int): Size of a network test group.
     """
 
     def __init__(self, *args, **kwargs):
@@ -415,21 +414,13 @@ class Initializer_Nettest(ProcessGroupInitializer):
                 rank = i * self.nettest_parallel_size + j
                 if rank < self.world_size:
                     ranks.append(rank)
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
 
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -477,20 +468,12 @@ class Initializer_Expert(ProcessGroupInitializer):
 
         for i in range(self.num_expert_parallel_group):
             ranks = list(range(i, self.world_size, self.num_expert_parallel_group))
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
@@ -530,7 +513,7 @@ class Initializer_Expert_Data(ProcessGroupInitializer):
         expert_parallel_groups = []
         expert_data_parallel_groups = []
         for dp_ranks in data_parallel_groups:
-            # partition of expert parallel None, e.g. [0,2], [4,6]
+            # partition of expert parallel group, e.g. [0,2], [4,6]
             part_ep_group = []
             for i in range(0, self.data_parallel_size, self.expert_parallel_size):
                 part_ep_group.append(dp_ranks[i : i + self.expert_parallel_size])
@@ -557,40 +540,24 @@ class Initializer_Expert_Data(ProcessGroupInitializer):
 
         groups = []
         for ranks in expert_parallel_groups:
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
                 groups.append(
                     (local_rank, group_world_size, process_group, cpu_group, ranks_in_group, ParallelMode.EXPERT)
                 )
 
         for ranks in expert_data_parallel_groups:
-            # None = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
-            # if use_cpu:
-            #     None = (
-            #         dist.new_group(ranks, backend="gloo", timeout=LLM_NCCL_TIMEOUT)
-            #         if dist.get_backend() != "gloo"
-            #         else None
-            #     )
-            # else:
-            #     None = None
+            group_cpu, group = None, None
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
                 groups.append(
                     (local_rank, group_world_size, process_group, cpu_group, ranks_in_group, ParallelMode.EXPERT_DATA)
@@ -616,9 +583,9 @@ class Initializer_Zero3_dp(ProcessGroupInitializer):
         assert self.data_parallel_size % self.zero1_parallel_size == 0
 
         # the only difference between this initializer and DP_initializer
-        # when FSDP is enabled, only corresponding pairs are in the same actual DP None due to parameter sharding
+        # when FSDP is enabled, only corresponding pairs are in the same actual DP group due to parameter sharding
         # eg: when zero=4 and dp=8
-        #     no fsdp: rank [0-7] share same model paramters, and [0-3], [4-7] are two separate zero None
+        #     no fsdp: rank [0-7] share same model paramters, and [0-3], [4-7] are two separate zero group
         #        fsdp: params of (0, 4), (1, 5), (2, 6), (3, 7) are the same actually
 
         self.data_parallel_size //= self.zero1_parallel_size
@@ -642,17 +609,224 @@ class Initializer_Zero3_dp(ProcessGroupInitializer):
 
         for i in range(self.rank_num_per_dp_group):
             ranks = [i + j * self.rank_num_per_dp_group for j in range(self.data_parallel_size)]
-            # None = dist.new_group(ranks)
-            # if use_cpu:
-            #     None = dist.new_group(ranks, backend="gloo") if dist.get_backend() != "gloo" else None
-            # else:
-            #     None = None
+            group = dist.new_group(ranks)
+            if use_cpu:
+                group_cpu = dist.new_group(ranks, backend="gloo") if dist.get_backend() != "gloo" else group
+            else:
+                group_cpu = None
 
             if self.rank in ranks:
                 local_rank = ranks.index(self.rank)
                 group_world_size = len(ranks)
-                process_group = None
-                cpu_group = None
+                process_group = group
+                cpu_group = group_cpu
+                ranks_in_group = ranks
+
+        return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
+
+
+class Initializer_Weight(ProcessGroupInitializer):
+    """A ProcessGroupInitializer for model weight parallelism.
+
+    Args:
+        rank (int): The rank of current process.
+        world_size (int): Size of whole communication world.
+        weight_parallel_size (int): Size of model weight parallel.
+        sequence_parallel_size (int): Size of data sequence parallel.
+        data_parallel_size (int): Size of data parallel.
+        pipeline_parallel_size (int): Size of pipeline parallel.
+        tensor_parallel_size (int): Size of tensor parallel.
+        zero1_parallel_size (int): Size of zero1 parallel.
+        expert_parallel_size (int): Size of expert parallel.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_weight_parallel_group = self.world_size // self.weight_parallel_size
+
+        assert self.world_size % self.weight_parallel_size == 0
+
+    def init_dist_group(self, use_cpu: bool = False):
+        """Initialize model weight parallel groups, and assign local_ranks and groups to each gpu.
+
+        Returns:
+            Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
+                A Weight parallelism's information tuple.
+        """
+        local_rank = None
+        ranks_in_group = None
+        process_group = None
+        cpu_group = None
+        group_world_size = None
+        mode = ParallelMode.WEIGHT
+
+        for i in range(self.num_weight_parallel_group):
+            ranks = [i * self.weight_parallel_size + j for j in range(self.weight_parallel_size)]
+            group_cpu, group = None, None
+
+            if self.rank in ranks:
+                local_rank = ranks.index(self.rank)
+                group_world_size = len(ranks)
+                process_group = group
+                cpu_group = group_cpu
+                ranks_in_group = ranks
+
+        return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
+
+
+class Initializer_Sequence(ProcessGroupInitializer):
+    """A ProcessGroupInitializer for data sequence parallelism.
+
+    Args:
+        rank (int): The rank of current process.
+        world_size (int): Size of whole communication world.
+        weight_parallel_size (int): Size of model weight parallel.
+        sequence_parallel_size (int): Size of data sequence parallel.
+        data_parallel_size (int): Size of data parallel.
+        pipeline_parallel_size (int): Size of pipeline parallel.
+        tensor_parallel_size (int): Size of tensor parallel.
+        zero1_parallel_size (int): Size of zero1 parallel.
+        expert_parallel_size (int): Size of expert parallel.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_sequence_parallel_group = self.world_size // self.sequence_parallel_size
+
+        assert self.world_size % self.sequence_parallel_size == 0
+
+    def init_dist_group(self, use_cpu: bool = False):
+        """Initialize data sequence parallel groups, and assign local_ranks and groups to each gpu.
+
+        Returns:
+            Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
+                A Sequence parallelism's information tuple.
+        """
+        local_rank = None
+        ranks_in_group = None
+        process_group = None
+        cpu_group = None
+        group_world_size = None
+        mode = ParallelMode.SEQUENCE
+
+        for i in range(self.num_sequence_parallel_group):
+            ranks = [i * self.sequence_parallel_size + j for j in range(self.sequence_parallel_size)]
+            group_cpu, group = None, None
+
+            if self.rank in ranks:
+                local_rank = ranks.index(self.rank)
+                group_world_size = len(ranks)
+                process_group = group
+                cpu_group = group_cpu
+                ranks_in_group = ranks
+
+        return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
+
+
+class Initializer_Data(ProcessGroupInitializer):
+    """A ProcessGroupInitializer for data parallelism.
+
+    Args:
+        rank (int): The rank of current process.
+        world_size (int): Size of whole communication world.
+        weight_parallel_size (int): Size of model weight parallel.
+        sequence_parallel_size (int): Size of data sequence parallel.
+        data_parallel_size (int): Size of data parallel.
+        pipeline_parallel_size (int): Size of pipeline parallel.
+        tensor_parallel_size (int): Size of tensor parallel.
+        zero1_parallel_size (int): Size of zero1 parallel.
+        expert_parallel_size (int): Size of expert parallel.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_dp_group = self.sequence_parallel_size
+
+        assert self.world_size % self.data_parallel_size == 0
+        assert self.world_size % self.sequence_parallel_size == 0
+
+    def init_dist_group(self, use_cpu: bool = False):
+        """Initialize data parallel groups, and assign local_ranks and groups to each gpu.
+
+        Returns:
+            Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
+                A Data parallelism's information tuple.
+
+        n=32 wp=8 sp=4 zo1=2
+        wp grops: [0-7] [8-15] [16-23] [24-31]
+        data groups: [0,4,8,12,16,20,24,28] [1,5,9,13,17,21,25,29] [2,6,10,14,18,22,26,30] [3,7,11,15,19,23,27,31]
+        """
+        local_rank = None
+        ranks_in_group = None
+        process_group = None
+        cpu_group = None
+        group_world_size = None
+        mode = ParallelMode.DATA
+
+        for i in range(self.num_dp_group):
+            ranks = [i + j * self.sequence_parallel_size for j in range(self.data_parallel_size)]
+            group_cpu, group = None, None
+
+            if self.rank in ranks:
+                local_rank = ranks.index(self.rank)
+                group_world_size = len(ranks)
+                process_group = group
+                cpu_group = group_cpu
+                ranks_in_group = ranks
+
+        return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode
+
+
+class Initializer_Weight_Data(ProcessGroupInitializer):
+    """A ProcessGroupInitializer for common weight's data parallelism.
+
+    Args:
+        rank (int): The rank of current process.
+        world_size (int): Size of whole communication world.
+        weight_parallel_size (int): Size of model weight parallel.
+        sequence_parallel_size (int): Size of data sequence parallel.
+        data_parallel_size (int): Size of data parallel.
+        pipeline_parallel_size (int): Size of pipeline parallel.
+        tensor_parallel_size (int): Size of tensor parallel.
+        zero1_parallel_size (int): Size of zero1 parallel.
+        expert_parallel_size (int): Size of expert parallel.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_weight_dp_group = self.weight_parallel_size
+        self.weight_data_parallel_size = self.world_size // self.num_weight_dp_group
+
+        assert self.world_size % self.weight_parallel_size == 0
+
+    def init_dist_group(self, use_cpu: bool = False):
+        """Initialize weight's data parallel groups, and assign local_ranks and groups to each gpu.
+
+        Returns:
+            Tuple (local_rank, group_world_size, process_group, ranks_in_group, mode):
+                A WEIGHT_DATA parallelism's information tuple.
+
+        n=32 wp=8 sp=4 zo1=2
+        wp grops: [0-7] [8-15] [16-23] [24-31]
+        weight data groups: [0,8,16,24] [1,9,17,25] [2,10,18,26] [3,11,19,27]
+                            [4,12,20,28] [5,13,21,29] [6,14,22,30] [7,15,23,31]
+        """
+        local_rank = None
+        ranks_in_group = None
+        process_group = None
+        cpu_group = None
+        group_world_size = None
+        mode = ParallelMode.WEIGHT_DATA
+
+        for i in range(self.num_weight_dp_group):
+            ranks = [i + j * self.weight_parallel_size for j in range(self.weight_data_parallel_size)]
+            group_cpu, group = None, None
+
+            if self.rank in ranks:
+                local_rank = ranks.index(self.rank)
+                group_world_size = len(ranks)
+                process_group = group
+                cpu_group = group_cpu
                 ranks_in_group = ranks
 
         return local_rank, group_world_size, process_group, cpu_group, ranks_in_group, mode

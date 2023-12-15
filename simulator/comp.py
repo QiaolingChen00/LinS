@@ -28,7 +28,7 @@ class TransformerComputation:
         # self.comp = self.total_computation(num_layers, vocab_size)
 
     def get_linear_cost(self, complexity):
-        return self.cost_data["linear"].predict(1, complexity)
+        return int(1000 * 10 *self.cost_data["linear"].predict(1, complexity)) # 转换成ms小数点保留两位
     
     def _compute_embedding(self, scale):
         '''
@@ -61,15 +61,15 @@ class TransformerComputation:
         # mlp w1
         # ISP: (b, s/sp, h) * (h, mlp_h)
         # MSP or FSP: (b, s, h) * (h, mlp_h/sp)
-        w1_volumn = self.dtype_size * self.s * self.h * self.mlp_hidden_size / self.sp_scale
+        w1_volumn = self.dtype_size * self.b * self.s * self.h * self.mlp_hidden_size / self.sp_scale
         w1_latency = self.get_linear_cost(w1_volumn)
         
         # mlp w2
         # ISP: (b, s/sp, h) * (h, mlp_h)
         # MSP or FSP: (b, s, h/sp) * (h/sp, mlp_h)
-        w2_volumn = self.dtype_size * self.s * self.h * self.mlp_hidden_size / self.sp_scale
+        w2_volumn = self.dtype_size * self.b * self.s * self.h * self.mlp_hidden_size / self.sp_scale
         w2_latency = self.get_linear_cost(w2_volumn)
-        
+
         
         total_latency = qkv_latency + wo_latency + w1_latency + w2_latency
         

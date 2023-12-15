@@ -15,7 +15,7 @@ from .process_group_initializer import (
     ParallelMode,
     ProcessGroupInitializer,
 )
-
+from .launch import check_and_modify_parallel_config
 
 __all__ = [
     "Config",
@@ -40,4 +40,5 @@ __all__ = [
     "get_current_mode",
     "set_seed_states",
     "sync_states",
+    "check_and_modify_parallel_config"
 ]

@@ -3,7 +3,8 @@ main package
 """
 import pickle
 
-from simulator.simulator import Constraint, Simulator
+# from simulator.simulator import Constraint, Simulator
+from simulator.noz3_simulator import Constraint, Simulator
 from utils.config import Config
 
 
@@ -11,7 +12,7 @@ def main():
     """main function"""
     config = Config(
         {
-            "world_size": 32,
+            "world_size": 128,
             "global_batch_size": 1 * (1024**2),
             "sequence_length": 4 * 1024,
             "model_size": 7,
