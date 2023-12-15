@@ -81,12 +81,12 @@ class TransformerComputation:
         '''
         # QK^T matrix multiplication
         # (b, s, h/sp) * (b, s, h/sp)^T
-        qkt_volume = self.dtype_size * self.s * self.s * self.h / self.sp_scale
+        qkt_volume = self.dtype_size * self.b * self.s * self.s * self.h / self.sp_scale
         qkt_latency = self.get_linear_cost(qkt_volume)
         
         # Score dot V
         # (b, s, s) * (b, s, h/sp)
-        score_v_volume = self.dtype_size * self.s * self.s * self.h / self.sp_scale
+        score_v_volume = self.dtype_size * self.b * self.s * self.s * self.h / self.sp_scale
         score_v_latency = self.get_linear_cost(score_v_volume)
         
         total_latency = qkt_latency + score_v_latency

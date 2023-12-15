@@ -181,7 +181,7 @@ class Constraint:
         self.model_size = config.model_size
         self.vocab_size = config.vocab_size
         self.use_fa = config.use_fa
-        self.fp32_ratio = 2
+        self.fp32_ratio = max(1, 4 // self.dtype_size)
         self._param_elements = self.model_size * 10**9
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
