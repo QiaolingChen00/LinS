@@ -23,7 +23,6 @@ class TransformerOverlap:
         self.cost_data = cost_data
         self.ckpt = ckpt # the activation checkpoint
         self.model_param = model_para # the model size
-        self.num_layers = num_layers
 
     def _get_overlap(self, lins_scale, algo_type):
         self.lins_scale = lins_scale
