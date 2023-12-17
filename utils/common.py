@@ -15,20 +15,14 @@ class CostType:
     LINEAR = "linear"
     BROADCAST = "broadcast"
     P2P = "p2p"
+    FLASH_ATTN = "flash_attn"
 
 
 class AlgoType:
-    ISP = "isp"
-    MSP = "msp"
-    FSP = "fsp"
-
-
-class SovlerType:
-    MODEL = "model"
-    PP = "pp"
-    OS = "os"
-    P = "P"
-    G = "G"
+    ISP = "intern"
+    MSP = "megatron"
+    FSP = "flash-attn"
+    NONE = "none"
 
 
 class BW:
@@ -51,6 +45,7 @@ MS = 1000
 US = 1000 * MS
 
 _79GB = 79 * GB
+_100GB = 100 * GB
 
 
 def get_model_config(model_size):
@@ -104,6 +99,15 @@ def pretty_print_latency(x):
 def get_local_rank():
     if "SLURM_PROCID" in os.environ:
         return int(os.environ["SLURM_PROCID"]) % 8
+    else:
+        return 0
+
+
+def get_world_size():
+    if "SLURM_NPROCS" in os.environ:
+        return int(os.environ["SLURM_NPROCS"]) % 8
+    else:
+        return 1
 
 
 def sync_all():

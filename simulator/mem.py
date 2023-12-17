@@ -2,7 +2,17 @@ from utils.common import _79GB, AlgoType, get_model_config
 
 
 class TransformerMemory:
-    def __init__(self, dtype_size: int, pp_size: int, sp_size: int, micro_bsz: int, seq_len: int, model_size: int, ckpt: int, use_fa: int) -> None:
+    def __init__(
+        self,
+        dtype_size: int,
+        pp_size: int,
+        sp_size: int,
+        micro_bsz: int,
+        seq_len: int,
+        model_size: int,
+        ckpt: int,
+        use_fa: int,
+    ) -> None:
         """_summary_
 
         Args:
@@ -21,6 +31,7 @@ class TransformerMemory:
         self._SP = sp_size
         self._PP = pp_size
         self.ckpt = ckpt
+        self.use_fa = use_fa
 
         self._h, self._a, self._l, self._mlp_ratio, self._multiple_of = get_model_config(model_size)
         self._l = self._l // pp_size

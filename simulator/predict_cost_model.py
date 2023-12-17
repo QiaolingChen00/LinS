@@ -1,3 +1,4 @@
+import functools
 import os
 import pickle
 from collections import OrderedDict
@@ -10,12 +11,9 @@ from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
 import profiler.benchmark
-from profiler.profiler import (
-    print_bench_reulsts,
-    reformat_data_to_cost_model,
-    run_profile,
-)
-from utils.common import *
+from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
+from profiler.profiler import run_profile
+from utils.common import MB, CostType
 from utils.config import Config
 
 
@@ -129,24 +127,47 @@ class PolynomialModel:
         pass
 
 
+def my_compare(a, b):
+    world_size_a, complexity_a = a[0], a[2]
+    world_size_b, complexity_b = b[0], b[2]
+    # print(world_size_a, world_size_b, complexity_a, complexity_b)
+
+    if world_size_a > world_size_b:
+        return True
+    elif world_size_a < world_size_b:
+        return False
+    else:
+        if complexity_a > complexity_b:
+            return True
+        elif complexity_a < complexity_b:
+            return False
+        else:
+            assert ValueError, f"a:{a}, b:{b}"
+
+
 class CostModel:
-    def __init__(self, is_master) -> None:
+    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None) -> None:
         self._master = is_master
         self._profile_args = Config(
             {
                 "trials": 10,
-                "warmups": 5,
+                "warmups": 1,
             }
         )
         self.cost_data = None
         self._data_prefix = "./data"
+        self.cost_kv_data = {}
+        if re_build_cost_data:
+            self.build_cost_model_by_key_value(build_type_list)
+        else:
+            self.load_dump_data()
 
     def _log(self, msg: str):
         if self._master:
             print(msg, flush=True)
 
     def _dump_cost_file(self, bench_type: str):
-        return f"{self._data_prefix}/dump_data_{bench_type}.pickle"
+        return f"{self._data_prefix}/{bench_type}.pickle"
 
     def dump_data(self):
         if self._master:
@@ -160,22 +181,80 @@ class CostModel:
         with open(dump_file, "wb") as f:
             pickle.dump(self.cost_data, f)
 
-    def build_cost_model(self):
+    def load_dump_data(self):
+        dirs = os.listdir("./data")
+        for cost_data_file in dirs:
+            name, suffix = cost_data_file.split(".")
+            if suffix == "pickle":
+                with open(f"./data/{cost_data_file}", "rb") as f:
+                    self.cost_kv_data[name] = pickle.load(f)
+
+    def build_cost_model_by_key_value(self, build_type_list):
         if self.cost_data is None:
             self.cost_data = OrderedDict()
-            for bench_type in BENCH_TYPE_LIST:
+            for bench_type in build_type_list:
                 self._log(f"now test {bench_type}")
                 dump_file = self._dump_cost_file(bench_type)
 
-                if not os.path.exists(dump_file):
-                    re_results = run_profile(self._profile_args, bench_type)
-                    print_bench_reulsts(re_results)
-                    data = reformat_data_to_cost_model(re_results)
-                else:
-                    with open(dump_file, "rb") as f:
-                        data = pickle.load(f)
+                # if not os.path.exists(dump_file):
+                re_results = run_profile(self._profile_args, bench_type)
 
-                if self._master:
-                    linear_model = PolynomialModel(degree=2, data=data, name=f"{self._data_prefix}/{bench_type}")
-                    linear_model.build_model()
-                    self.cost_data[bench_type] = linear_model
+                if bench_type == CostType.LINEAR:
+                    data = CostModel.reformat_data_to_cost_model(re_results)
+                    if self._master:
+                        linear_model = PolynomialModel(degree=1, data=data, name=f"{self._data_prefix}/{bench_type}")
+                        linear_model.build_model()
+                        re_results = linear_model
+
+                with open(dump_file, "wb+") as f:
+                    pickle.dump(re_results, f)
+
+    @staticmethod
+    def reformat_data_to_cost_model(total_results):
+        list_data = []
+
+        for world_size in total_results.keys():
+            for complexity in total_results[world_size].keys():
+                for value in total_results[world_size][complexity]:
+                    print(value)
+                    list_data.append([world_size, value["lat"], complexity])
+
+        list_data.sort(key=functools.cmp_to_key(my_compare))
+        data_list = list(map(list, zip(*list_data)))
+        data = {"World_Size": data_list[0], "Latency_ms": data_list[1], "Data_MB": data_list[2]}
+
+        return data
+
+    def predict_cost(self, cost_type: CostType, complexity=0, **kwargs):
+        """predict computation cost
+        The cost of attention will use KV mapping, and the cost of linear will
+        use PolynomialModel.
+
+        Args:
+            cost_type (CostType): _description_
+            complexity (int, optional): _description_. Defaults to 0.
+
+        Returns:
+            float: op latency.
+        """
+        if cost_type == CostType.FLASH_ATTN:
+            try:
+                return self.cost_kv_data[cost_type][1][UnitMultiHeadAttn.gen_store_key(**kwargs)][0]["lat"]
+            except KeyError as e:
+                print(e)
+                import pdb
+
+                pdb.set_trace()
+        elif cost_type == CostType.LINEAR:
+            return self.cost_kv_data[cost_type].predict(1, complexity)
+
+
+cost_model = None
+
+
+def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
+    global cost_model
+    if cost_model is None:
+        cost_model = CostModel(is_master=True, re_build_cost_data=False)
+
+    return cost_model.predict_cost(cost_type, complexity=complexity, **kwargs)
