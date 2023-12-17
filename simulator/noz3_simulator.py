@@ -16,8 +16,9 @@ from simulator.overlap import TransformerOverlap
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _79GB,_100GB, GB, AlgoType, CostType, get_model_config
+from utils.common import _79GB, _100GB, GB, AlgoType, CostType, get_model_config
 from utils.config import Config
+
 
 class LinsSolution:
     def __init__(
@@ -133,7 +134,11 @@ class Simulator:
     def set_memory_constraint_strict(self):
         # TODO: 可能有两个限制，一个是forward+backward；一个是step，这两个阶段都需满足显存不超过80GB
         self.total_memorycost_expr = z3.Sum(
-            [self._A[i][j] * z3.If(self._X[i][j], 1, 0) for i in range(len(self._A)) for j in range(self._num_strategies)]
+            [
+                self._A[i][j] * z3.If(self._X[i][j], 1, 0)
+                for i in range(len(self._A))
+                for j in range(self._num_strategies)
+            ]
         )
         self._solver.add(self.total_memorycost_expr < self._memory_threshold)
 
@@ -164,8 +169,8 @@ class Simulator:
         while self._solver.check() == z3.sat:
             model = self._solver.model()
             # current_cost = model[self._total_comm_cost].as_long()
-            current_cost_value = int(str(model[self._total_comm_cost])) # .as_decimal(10)
-            current_mem_cost_value = int(str(model[self._total_mem_cost]))  #.as_decimal(10)
+            current_cost_value = int(str(model[self._total_comm_cost]))  # .as_decimal(10)
+            current_mem_cost_value = int(str(model[self._total_mem_cost]))  # .as_decimal(10)
 
             if min_comm_cost is None or current_cost_value < min_comm_cost:
                 min_comm_cost = current_cost_value
@@ -178,12 +183,11 @@ class Simulator:
 
 
 class Constraint:
-    def __init__(self, world_size, global_bsz, seq_len, config, cost_data) -> None:
+    def __init__(self, world_size, global_bsz, seq_len, config) -> None:
         self.world_size = world_size
         self.global_bsz = global_bsz  # 4
         self.seq_len = seq_len
         self.dtype_size = config.dtype_size
-        self.cost_data = cost_data
         self.model_size = config.model_size
         self.vocab_size = config.vocab_size
         self.use_fa = config.use_fa
@@ -222,12 +226,14 @@ class Constraint:
         one_f_one_b_p2p_num = micro_num - 1
         cooldown_p2p_num = min(pp_size, micro_num)
 
-        p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * p2p(buffer_size, ParallelMode.PIPELINE)
+        p2p_latency = (warmup_p2p_num + one_f_one_b_p2p_num + cooldown_p2p_num) * p2p(
+            buffer_size, ParallelMode.PIPELINE
+        )
         return p2p_latency
 
     def comm_os_cost(self, model_p_element) -> float:
         """切分OS引入的参数同步的通信开销"""
-        return broadcast(self.dtype_size * model_p_element, ParallelMode.ZERO1) 
+        return broadcast(self.dtype_size * model_p_element, ParallelMode.ZERO1)
 
     def mem_cost(self, i: int, j: int, sp_size: int, model_p_element: int, algo_type: AlgoType):
         """_summary_
@@ -268,7 +274,17 @@ class Constraint:
             return 0  # no cost
 
     def get_cost(
-        self, search_ranges, num_strategies, algo_type, world_size, micro_bsz, micro_num, activation_ckpt, sp, pp, model_p_element
+        self,
+        search_ranges,
+        num_strategies,
+        algo_type,
+        world_size,
+        micro_bsz,
+        micro_num,
+        activation_ckpt,
+        sp,
+        pp,
+        model_p_element,
     ):
         SEARCH_DIMENSION = len(["pp", "sp", "wp", "zp"])
         # 2,4,6,8,16,32
@@ -301,10 +317,10 @@ class Constraint:
                 # lins_scale = j * 8 if j != 0 else 1
 
                 if j == 0:
-                    A[i][j] = _100GB   # 不可行解
+                    A[i][j] = _100GB  # 不可行解
                     C[i][j] = 0
                     continue
-                
+
                 # 显存开销
                 A[i][j] = self.mem_cost(i, shared_scale, sp, model_p_element, algo_type) + activation
 
@@ -315,23 +331,19 @@ class Constraint:
                         A[i][j] = _100GB
                         C[i][j] = 0
                     else:
-                        C[i][j] = (
-                            grad_acc
-                            * TransformerOverlap(
-                                micro_bsz=micro_bsz,
-                                seq_len=self.seq_len,
-                                vocab_size=self.vocab_size,
-                                dtype_size=self.dtype_size,
-                                model_size=self.model_size,
-                                sp_size=sp,
-                                pp_size=pp,
-                                world_size=self.world_size,
-                                cost_data=self.cost_data,
-                                ckpt=activation_ckpt,
-                                model_para=pp_model_p_element,  # TODO: 这里除了 PP 需要 check 正确性
-                                num_layers=self.num_layer,
-                            )._get_overlap(shared_scale, algo_type)
-                        )
+                        C[i][j] = grad_acc * TransformerOverlap(  # 梯度累加
+                            micro_bsz=micro_bsz,
+                            seq_len=self.seq_len,
+                            vocab_size=self.vocab_size,
+                            dtype_size=self.dtype_size,
+                            model_size=self.model_size,
+                            sp_size=sp,
+                            pp_size=pp,
+                            world_size=self.world_size,
+                            ckpt=activation_ckpt,
+                            model_para=pp_model_p_element,  # TODO: 这里除了 PP 需要 check 正确性
+                            num_layers=self.num_layer,
+                        )._get_overlap(shared_scale, algo_type)
                 elif i == 2:
                     parallel_conf = self.build_parallel_config(algo_type, world_size, pp, sp, wp=1, zp=shared_scale)
                     if parallel_conf is None:
@@ -401,7 +413,7 @@ class Constraint:
 
                             # 这里不限制head数量，只是为了获得 2,4,6,8,16这样的解空间
                             search_ranges = [0] + list(SPIter(self.world_size, self.world_size))
-                            num_strategies = len(search_ranges) # + 1 表示从下标1开始搜素
+                            num_strategies = len(search_ranges)  # + 1 表示从下标1开始搜素
 
                             A, C, activation = self.get_cost(
                                 search_ranges,

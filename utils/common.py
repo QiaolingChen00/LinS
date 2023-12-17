@@ -15,6 +15,7 @@ class CostType:
     LINEAR = "linear"
     BROADCAST = "broadcast"
     P2P = "p2p"
+    FLASH_ATTN = "flash_attn"
 
 
 class AlgoType:
@@ -45,6 +46,7 @@ US = 1000 * MS
 
 _79GB = 79 * GB
 _100GB = 100 * GB
+
 
 def get_model_config(model_size):
     if model_size == 7:
@@ -97,6 +99,15 @@ def pretty_print_latency(x):
 def get_local_rank():
     if "SLURM_PROCID" in os.environ:
         return int(os.environ["SLURM_PROCID"]) % 8
+    else:
+        return 0
+
+
+def get_world_size():
+    if "SLURM_NPROCS" in os.environ:
+        return int(os.environ["SLURM_NPROCS"]) % 8
+    else:
+        return 1
 
 
 def sync_all():

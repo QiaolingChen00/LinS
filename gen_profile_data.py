@@ -1,17 +1,7 @@
-import os
-import pickle
-
-import torch.distributed as dist
-
-import profiler.benchmark
-from profiler.profiler import (
-    print_bench_reulsts,
-    reformat_data_to_cost_model,
-    run_profile,
-)
-from utils.common import *
-from utils.config import Config
 from simulator.predict_cost_model import CostModel
+from utils.common import CostType, get_global_rank, get_world_size
+from utils.config import Config
+
 # if __name__ == "__main__":
 #     total_results = {
 #         '32' : {
@@ -29,10 +19,9 @@ from simulator.predict_cost_model import CostModel
 
 
 if __name__ == "__main__":
-    world_size = int(os.environ['SLURM_NPROCS'])
-    build_process_gourp(world_size)
-    cost_model = CostModel(is_master=get_global_rank() == 0)
-    cost_model.build_cost_model()
-    # cost_model.dump_data()
-    cost_model.dump_all_data()
+    world_size = get_global_rank()
+    if world_size > 1:
+        build_process_gourp(world_size)
 
+    build_type_list = [CostType.LINEAR, CostType.FLASH_ATTN]
+    cost_model = CostModel(is_master=get_global_rank() == 0, re_build_cost_data=True, build_type_list=build_type_list)
