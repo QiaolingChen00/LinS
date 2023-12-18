@@ -23,7 +23,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim):
         )
     )
 
-    print(predict)
+    # import pdb; pdb.set_trace()
 
     return int(predict)
 

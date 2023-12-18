@@ -1,25 +1,9 @@
 from simulator.predict_cost_model import CostModel
-from utils.common import CostType, get_global_rank, get_world_size
+from utils.common import CostType, build_process_gourp, get_global_rank, get_world_size
 from utils.config import Config
 
-# if __name__ == "__main__":
-#     total_results = {
-#         '32' : {
-#             '1': [{'lat' : 0.01}],
-#             '2': [{'lat' : 0.02}],
-#             '3': [{'lat' : 0.03}],
-#         },
-#         '16' : {
-#             '1': [{'lat' : 0.01}],
-#             '2': [{'lat' : 0.02}],
-#             '3': [{'lat' : 0.03}],
-#         }
-#     }
-#     print(reformat_data_to_cost_model(total_results))
-
-
 if __name__ == "__main__":
-    world_size = get_global_rank()
+    world_size = get_world_size()
     if world_size > 1:
         build_process_gourp(world_size)
 

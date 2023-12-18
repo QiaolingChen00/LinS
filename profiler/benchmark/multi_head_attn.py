@@ -6,9 +6,10 @@ import warnings
 
 import torch
 from einops import rearrange
-from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
-from profiler.registry import BENCHMARK_INITIALIZER
 from torch import nn
+
+# from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
+from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import K, get_local_rank
 
 from .base_benchmark import UnitBench
