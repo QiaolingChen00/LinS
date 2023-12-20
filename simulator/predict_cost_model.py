@@ -15,7 +15,7 @@ from sklearn.preprocessing import PolynomialFeatures
 import profiler.benchmark
 from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
 from profiler.profiler import run_profile
-from utils.common import MB, CostType
+from utils.common import MB, OUT_OF_MEM_LATENCY, CostType
 from utils.config import Config
 
 
@@ -48,7 +48,7 @@ class PolynomialModel:
         plt.figure(figsize=(12, 6))
         for card in self.data["World_Size"].unique():
             subset = self.data[self.data["World_Size"] == card]
-            plt.scatter(subset["Data_MB"], subset["Latency_ms"], label=f"{card} cards")
+            plt.scatter(subset["Data_B"], subset["Latency_s"], label=f"{card} cards")
 
         plt.xlabel("Data Transferred (MB)")
         plt.ylabel("Latency (ms)")
@@ -66,7 +66,7 @@ class PolynomialModel:
         for seg, (low, high) in self.segments.items():
             for card in self.data["World_Size"].unique():
                 subset = self.data[
-                    (self.data["World_Size"] == card) & (self.data["Data_MB"] >= low) & (self.data["Data_MB"] < high)
+                    (self.data["World_Size"] == card) & (self.data["Data_B"] >= low) & (self.data["Data_B"] < high)
                 ]
 
                 # 如果该段中没有足够的数据点，则跳过
@@ -74,8 +74,8 @@ class PolynomialModel:
                     continue
 
                 # 准备数据
-                X = subset["Data_MB"].values.reshape(-1, 1)
-                y = subset["Latency_ms"].values
+                X = subset["Data_B"].values.reshape(-1, 1)
+                y = subset["Latency_s"].values
                 X_poly = self.poly_features.fit_transform(X)
 
                 # 拟合模型
@@ -138,18 +138,39 @@ class SplineModel:
                 with open(f"{self._data_prefix}/{cost_data_file}", "rb") as f:
                     self.data[name] = pickle.load(f)
 
+    @staticmethod
+    def reformat_data_to_cost_model(total_results):
+        reformat_data = dict()
+        for world_size in total_results.keys():
+            list_data = []
+            for complexity in total_results[world_size].keys():
+                for value in total_results[world_size][complexity]:
+                    list_data.append([value["lat"], complexity])
+
+            # list_data.sort(key=functools.cmp_to_key(my_compare))
+            data_list = list(map(list, zip(*list_data)))
+            reformat_data[world_size] = {"Data_B": data_list[1], "Latency_s": data_list[0]}
+
+        return reformat_data
+
     def build_model(self):
-        for cost_type in self.data.keys():
+        for cost_type, cost_data in self.data.items():
             if cost_type != CostType.FLASH_ATTN:  # fa我们直接查表，不预测
-                for world_size in self.data[cost_type].keys():
-                    data = self.data[cost_type][world_size]
-                    x = data["Data_B"]
-                    y = data["Latency_s"]
+                cost_data = SplineModel.reformat_data_to_cost_model(cost_data)
+                for world_size, data in cost_data.items():
+                    try:
+                        x = data["Data_B"]
+                        y = data["Latency_s"]
+                    except KeyError:
+                        import pdb
+
+                        pdb.set_trace()
                     self.spline_model_list[cost_type] = {}
                     self.spline_model_list[cost_type][world_size] = interp1d(x, y, kind="slinear")
             else:
+                print(cost_data[1])
                 self.spline_model_list[cost_type] = {}
-                self.spline_model_list[cost_type][1] = self.data[cost_type][1]
+                self.spline_model_list[cost_type][1] = cost_data[1]
 
     def predict(self, cost_type, world_size, complexity):
         return self.spline_model_list[cost_type][world_size](complexity)
@@ -168,7 +189,8 @@ class SplineModel:
         """
         if cost_type == CostType.FLASH_ATTN:
             try:
-                return self.spline_model_list[cost_type][1][UnitMultiHeadAttn.gen_store_key(**kwargs)][0]["lat"]
+                key = UnitMultiHeadAttn.gen_store_key(**kwargs)
+                return self.spline_model_list[cost_type][1][key][0]["lat"]
             except KeyError as e:
                 import pdb
 
@@ -177,7 +199,7 @@ class SplineModel:
             spline_model = self.spline_model_list[cost_type][world_size]
             try:
                 predict = spline_model(complexity)
-            except ValueError as e:
+            except ValueError:
                 below_bounds, above_bounds = spline_model.x[0], spline_model.x[-1]
                 if complexity < below_bounds:
                     return spline_model(below_bounds)  # 如果超过下界就返回下界
@@ -231,24 +253,9 @@ class GenCostModel:
             for bench_type in build_type_list:
                 self._log(f"now test {bench_type}")
                 re_results = run_profile(self._profile_args, bench_type)
+                # re_results = GenCostModel.reformat_data_to_cost_model(re_results)
                 with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
                     pickle.dump(re_results, f)
-
-    @staticmethod
-    def reformat_data_to_cost_model(total_results):
-        list_data = []
-
-        for world_size in total_results.keys():
-            for complexity in total_results[world_size].keys():
-                for value in total_results[world_size][complexity]:
-                    print(value)
-                    list_data.append([world_size, value["lat"], complexity])
-
-        list_data.sort(key=functools.cmp_to_key(my_compare))
-        data_list = list(map(list, zip(*list_data)))
-        data = {"World_Size": data_list[0], "Latency_ms": data_list[1], "Data_MB": data_list[2]}
-
-        return data
 
 
 cost_model = None

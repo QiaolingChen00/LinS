@@ -19,9 +19,10 @@ class CostType:
 
 
 class AlgoType:
-    ISP = "intern"
-    MSP = "megatron"
-    FSP = "flash-attn"
+    ISP = "isp"
+    MSP = "msp"
+    FSP = "fsp"
+    MTP = "mtp"
     NONE = "none"
 
 
@@ -48,6 +49,9 @@ _79GB = 79 * GB
 _100GB = 100 * GB
 
 
+OUT_OF_MEM_LATENCY = 10**9
+
+
 def get_model_config(model_size):
     if model_size == 7:
         h = 4096
@@ -65,10 +69,12 @@ def get_model_config(model_size):
         h = 6144
         a = 48
         l = 60
-    else:
+    elif model_size == 65:
         h = 8192
         a = 64
         l = 80
+    else:
+        raise ValueError(f"unsupport modesize: {model_size}")
 
     mlp_ratio = 8 / 3
     multiple_of = 256

@@ -14,21 +14,18 @@ from typing import Union
 
 import numpy as np
 import torch
-
-# from internlm.utils.common import SingletonMeta
-# from internlm.utils.logger import get_logger
-# from internlm.utils.timeout import LLM_NCCL_TIMEOUT
+import torch.distributed as dist
+from utils.config import Config
 
 from . import process_group_initializer as pgroup_initializer
 from .process_group_initializer import ParallelMode
-from utils.config import  Config
-# from .random import add_seed, get_seeds, set_mode
 
 IS_TENSOR_PARALLEL = "is_tensor_parallel"
 IS_SEQUENCE_PARALLEL = "is_sequence_parallel"
+IS_REPLICA_ZERO_PARALLEL = "is_replica_zero_parallel"
+IS_SEQUENCE_DATA_PARALLEL = "is_sequence_data_parallel"
+IS_WEIGHT_ZERO_PARALLEL = "is_weight_zero_parallel"
 
-# logger = get_logger(__file__)
-logger = print
 
 class ParallelContext:
     """This class provides interface functions for users to get the parallel context,
@@ -61,22 +58,9 @@ class ParallelContext:
         self.virtual_pipeline_parallel_rank = None
         self._expert_parallel_group_names = []
 
-
     @property
     def config(self):
         return self._config
-
-    @property
-    def micro_bsz(self):
-        return self._config.data.micro_bsz
-
-    @property
-    def micro_num(self):
-        return self._config.data.micro_num
-
-    @property
-    def grad_accum_num(self):
-        return self._config.data.gradient_accumulation
 
     @property
     def expert_parallel_group_names(self):
@@ -98,6 +82,13 @@ class ParallelContext:
             self._config = Config(config)
         else:
             raise TypeError("Invalid type for config, only dictionary or string is supported")
+
+    def detect_num_processes_on_current_node(self):
+        hostname = socket.gethostname()
+        hostname_list = [None for _ in range(self.get_world_size(ParallelMode.GLOBAL))]
+        dist.all_gather_object(hostname_list, hostname, group=self.get_group(ParallelMode.GLOBAL))
+        counter = Counter(hostname_list)
+        self.num_processes_on_current_node = counter[hostname]
 
     @staticmethod
     def _check_parallel_mode(parallel_mode: ParallelMode):
@@ -204,10 +195,15 @@ class ParallelContext:
 
     def is_rank_for_log(self):
         """Returns a boolean value indicating whether the current device should print log."""
+        # is_log_rank = (
+        #     self.is_first_rank(ParallelMode.DATA)
+        #     and self.is_first_rank(ParallelMode.TENSOR)
+        #     and self.is_last_rank(ParallelMode.PIPELINE)
+        # )
         is_log_rank = (
-            self.is_first_rank(ParallelMode.DATA)
-            and self.is_first_rank(ParallelMode.TENSOR)
-            and self.is_last_rank(ParallelMode.PIPELINE)
+            self.is_first_rank(ParallelMode.WEIGHT)
+            and self.is_first_rank(ParallelMode.DATA)
+            and self.is_first_rank(ParallelMode.WEIGHT_DATA)
         )
         return is_log_rank
 
@@ -299,6 +295,7 @@ class ParallelContext:
            port (str): the master port for distributed training.
            use_cpu (bool): whether to set up cpu process group.
         """
+        # None will give the default global process group for pytorch dist operations
         ranks = list(range(world_size))
         self._register_dist(rank, world_size, None, None, ranks, ParallelMode.GLOBAL)
         self._global_ranks[ParallelMode.GLOBAL] = rank
@@ -327,15 +324,15 @@ class ParallelContext:
         #     f" parallel size ({dps}) * pipeline parallel size "
         #     f"({pps}) * tensor parallel size ({tps})"
         # )
-        assert self.zero1_parallel_size > 0
-        assert self.data_parallel_size % self.zero1_parallel_size == 0
+        assert self.zero1_parallel_size > 0, f"zero1_parallel_size: {self.zero1_parallel_size} should > 0"
+        assert self.data_parallel_size % self.zero1_parallel_size == 0, f"data_parallel_size:{self.data_parallel_size} % zero1_parallel_size: {self.zero1_parallel_size} != 0"
 
         # check for fsdp:
         # if zo_size < dp_size, ckpts saving will introduce redundent storage for model weights
         # because pytorch "ShardTensor" need to ensure current global rank equals to saved shard's global rank
         # pytorch vision: 1.13.1+cu117
         if self.data_parallel_size > self.zero1_parallel_size and self.config.parallel.zero1.get("fsdp", False):
-            logger.warning(
+            print.warning(
                 f"zo size: {self.zero1_parallel_size} < dp size: {self.data_parallel_size}, "
                 "will introduce redundancy when saving fsdp model ckpts, recommend setting them to same value"
             )
@@ -364,18 +361,24 @@ class ParallelContext:
         parallel_config = self.config.get("parallel", None)
         if parallel_config is not None:
             self._set_parallel_size_from_config(parallel_config, "weight", "weight_parallel_size")
-            self._set_parallel_size_from_config(parallel_config, "sequence", "sequence_parallel_size")
-            self._set_parallel_size_from_config(parallel_config, "pipeline", "pipeline_parallel_size")
             self._set_parallel_size_from_config(parallel_config, "tensor", "tensor_parallel_size")
+            self._set_parallel_size_from_config(parallel_config, "pipeline", "pipeline_parallel_size")
             self._set_parallel_size_from_config(parallel_config, "zero1", "zero1_parallel_size")
 
         # the user should not set the data parallel size manually
         # instead, it should be calculated based on other parallel config
-        assert self.tensor_parallel_size == 1
-        assert self.pipeline_parallel_size == 1
-        assert self.zero1_parallel_size >= 1
-        self.data_parallel_size = self.world_size // self.sequence_parallel_size
-        self.weight_data_parallel_size = self.world_size // self.weight_parallel_size
+        assert self.zero1_parallel_size >= 1, f"self.zero1_parallel_size: {self.zero1_parallel_size} should >= 1"
+        self.sequence_parallel_size = self.tensor_parallel_size
+        self.data_parallel_size = self.world_size // self.pipeline_parallel_size // self.sequence_parallel_size
+        self.weight_data_parallel_size = self.world_size // self.pipeline_parallel_size // self.weight_parallel_size
+        if parallel_config["tensor"]["mode"] != "isp":
+            assert (
+                self.zero1_parallel_size <= self.data_parallel_size
+            ), f"zero1_size:{self.zero1_parallel_size} should be less than dp_size:{self.data_parallel_size}"
+        else:
+            assert (
+                self.zero1_parallel_size <= self.weight_data_parallel_size
+            ), f"zero1_size:{self.zero1_parallel_size} should be less than wdp_size:{self.weight_data_parallel_size}"
 
         # the recommended nettest_parallel_size is 32 GPUs
         self.nettest_parallel_size = 32
@@ -395,6 +398,7 @@ class ParallelContext:
             rank,
             world_size,
             self.weight_parallel_size,
+            self.weight_data_parallel_size,
             self.sequence_parallel_size,
             self.data_parallel_size,
             self.pipeline_parallel_size,
@@ -407,16 +411,20 @@ class ParallelContext:
         # run initialization of different process groups
         initializers = []
         initializers.append(pgroup_initializer.Initializer_Weight(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Sequence(*initializer_args))
+        if parallel_config["tensor"]["mode"] == "isp":
+            initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Data(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Model(*initializer_args))
+        # if self.weight_parallel_size <= 1:
+        #     initializers.append(pgroup_initializer.Initializer_Model(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Zero1(*initializer_args))
+        if parallel_config["tensor"]["mode"] != "isp":
+            initializers.append(pgroup_initializer.Initializer_Zero1(*initializer_args))
+        else:
+            initializers.append(pgroup_initializer.Initializer_Zero1_ISP(*initializer_args))
         if isinstance(self.config.parallel.zero1, dict) and self.config.parallel.zero1.get("fsdp", False):
             initializers.append(pgroup_initializer.Initializer_Zero3_dp(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Nettest(*initializer_args))
-        if self.pipeline_parallel_size > 1:
+        # initializers.append(pgroup_initializer.Initializer_Nettest(*initializer_args))
+        if self.pipeline_parallel_size >= 1:
             initializers.append(pgroup_initializer.Initializer_Pipeline(*initializer_args))
         # if self.config.model.get("num_experts", 1) > 1:
         #     initializers.append(pgroup_initializer.Initializer_Expert_Data(*initializer_args))
@@ -428,19 +436,35 @@ class ParallelContext:
             else:
                 self._register_dist(*parallel_setting)
 
-
     def is_initialized(self, parallel_mode: ParallelMode):
         """Returns a boolean value indicating whether `parallel_mode` is initialized
         in the current system.
         """
         return parallel_mode in self._groups
 
+    def destroy(self):
+        self._groups.clear()
+
+    def set_device(self, device_ordinal: int = None):
+        """Sets distributed processes to be bound to devices.
+
+        Args:
+           device_ordinal (int, optional): the device id to be bound to
+        """
+        global_rank = self.get_global_rank()
+        if device_ordinal is None:
+            devices_per_node = torch.cuda.device_count()
+            device_ordinal = global_rank % devices_per_node
+
+        torch.cuda.set_device(device_ordinal)
+        print.info(f"process rank {global_rank} is bound to host:{socket.gethostname()} device: {device_ordinal}")
+
     def set_virtual_pipeline_parallel_size(self, size):
         self.virtual_pipeline_parallel_size = size
 
     def set_virtual_pipeline_parallel_rank(self, rank):
         self.virtual_pipeline_parallel_rank = rank
-    
+
     def check_pg_is_intra(self, parallel_mode: ParallelMode):
         pg_group_ranks = self.get_ranks_in_group(parallel_mode)
         if len(pg_group_ranks) > 8:
@@ -448,12 +472,15 @@ class ParallelContext:
         else:
             min_rank = min(pg_group_ranks)
             max_rank = max(pg_group_ranks)
-            return (max_rank - min_rank) <=7
+            return (max_rank - min_rank) <= 7
 
-    def destroy(self):
-        """Destroys the current distributed parallel environment."""
-        # destroy global process group
-        self._groups.clear()
+    def same_group_in_one_node(self, parallel_mode: ParallelMode):
+        pg_group_ranks = self.get_ranks_in_group(parallel_mode)
+        same_node_rank_nums = 0
+        for g_rank in pg_group_ranks:
+            if g_rank / 8 == 0:
+                same_node_rank_nums += 1
+        return len(pg_group_ranks) // same_node_rank_nums
 
 
 global_context = ParallelContext()

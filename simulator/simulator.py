@@ -185,7 +185,7 @@ class Constraint:
         self._param_elements = self.model_size * 10**9
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
+        self._algo_list = [AlgoType.FSP]  # AlgoType.ISP, AlgoType.MSP,
 
     def get_bsz(self, pp_size, sp_size, seq_len):
         num_tokens = self.global_bsz
@@ -312,9 +312,7 @@ class Constraint:
                 for micro_bsz, micro_num in bs_bns:
                     pp_model_p_element = self._param_elements // pp
                     for algo_type in self._algo_list:
-                        for activation_ckpt in [
-                            0,
-                        ]:  # the value should be {0, 1}
+                        for activation_ckpt in [0, 1]:  # the value should be {0, 1}
                             pp_comm_cost = self.pp_comm_overhead(pp, sp, self.seq_len, micro_bsz, micro_num, self._h)
 
                             overlap_res = TransformerOverlap(

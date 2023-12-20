@@ -34,7 +34,6 @@ class TransformerComputation:
         b,
         s,
         h,
-        num_layers,
         vocab_size,
         sp_scale,
         dtype_size,
@@ -50,15 +49,14 @@ class TransformerComputation:
         self.sp_scale = sp_scale
         self.qkv_computation = 0
         self.qkt_computation = 0
-        self.score_v_computation = 0
-        self.post_attention_linear = 0
-        self.first_linear = 0
-        self.second_linear = 0
-        self.logits_computation = 0
-        self.attention_computation = 0
-        self.flash_attention_computation = 0
-        self.mlp_computation = 0
-        self.num_layers = num_layers
+        # self.score_v_computation = 0
+        # self.post_attention_linear = 0
+        # self.first_linear = 0
+        # self.second_linear = 0
+        # self.logits_computation = 0
+        # self.attention_computation = 0
+        # self.flash_attention_computation = 0
+        # self.mlp_computation = 0
         self.vocab_size = vocab_size
         self.dtype_size = dtype_size
         self.mlp_ratio = mlp_ratio
@@ -68,7 +66,6 @@ class TransformerComputation:
         )
         self.ckpt = ckpt
         self.use_fa = use_fa
-        # self.comp = self.total_computation(num_layers, vocab_size)
 
     def _compute_embedding(self, scale):
         """
