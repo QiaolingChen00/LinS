@@ -14,7 +14,7 @@ from typing import Dict, List
 import torch
 import torch.distributed as dist
 
-from utils.common import get_global_rank, get_world_size, sync_all
+from utils.common import OUT_OF_MEM_LATENCY, get_global_rank, get_world_size, sync_all
 
 from .registry import BENCHMARK_INITIALIZER
 
@@ -49,13 +49,30 @@ def run_profile(args, test_type):
         sync_all()
         # Warmups, establish connections, etc.
         for _ in range(args.warmups):
-            test_case.run()
-        sync_all()
+            try:
+                test_case.run()
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                return OUT_OF_MEM_LATENCY
+        try:
+            sync_all()
+        except RuntimeError:
+            #  self.packed_length * 3 * self.embed_dim * self.dtype_size
+            print(
+                f"packed_length: {test_case.packed_length}, embed_dim: {test_case.embed_dim}, micro_bsz: {test_case.micro_bsz}, seq_len: {test_case.seq_len}",
+                flush=True,
+            )
+            torch.cuda.empty_cache()
+            return OUT_OF_MEM_LATENCY
 
         # time the actual comm op trials times and average it
         pre = time.perf_counter()
         for _ in range(args.trials):
-            test_case.run()
+            try:
+                test_case.run()
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                return OUT_OF_MEM_LATENCY
         sync_all()
         duration = time.perf_counter() - pre
 
@@ -76,11 +93,15 @@ def run_profile(args, test_type):
         world_size = get_world_size()
         if world_size not in re_results:
             re_results[world_size] = {}
-
-        bench = BENCH(**filter_kwargs(BENCH.__init__, test_case))
-        sync_all()
-        avg_duration = run_benchmark(bench, args)
-        test_case["lat"] = avg_duration
+        try:
+            bench = BENCH(**filter_kwargs(BENCH.__init__, test_case))
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            test_case["lat"] = OUT_OF_MEM_LATENCY
+        else:
+            sync_all()
+            avg_duration = run_benchmark(bench, args)
+            test_case["lat"] = avg_duration
 
         # assert bench.complexity() not in re_results
         # re_results[bench.complexity()] = test_case
