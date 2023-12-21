@@ -74,7 +74,7 @@ def main():
         {
             "world_size": 64,
             "global_batch_size": 4 * 1024 * 1024,
-            "sequence_length": 256 * 1024,
+            "sequence_length": 4 * 1024,
             "model_size": 20,
             "vocab_size": 103168,
             "dtype_size": 2,
@@ -82,8 +82,8 @@ def main():
         }
     )
 
-    global_bsz_min = 4 * 1024 * 1024
-    global_bsz_max = 4 * 1024 * 1024
+    global_bsz_min = 1 * 1024 * 1024
+    global_bsz_max = 1 * 1024 * 1024
 
     world_size_max = 64
     world_size_min = 64
@@ -98,6 +98,9 @@ def main():
         min_world_size=world_size_min,
         debug=True,
         overlap_wdp=False,
+        use_fixed_micro_bsz=True,
+        fixed_micro_num=1,
+        fixed_micro_bsz=1,
         config=config,
     )
     externl_sim.run_flexible_worldsize_loop()

@@ -114,23 +114,46 @@ class PPIter:
 class Constraint:
     def __init__(
         self,
-        world_size,
-        global_bsz,
-        global_bsz_min,
-        global_bsz_max,
-        max_world_size,
-        min_world_size,
-        seq_len,
-        overlap_wdp,
-        debug,
-        config,
+        world_size: int,
+        global_bsz: int,
+        global_bsz_min: int,
+        global_bsz_max: int,
+        max_world_size: int,
+        min_world_size: int,
+        seq_len: int,
+        overlap_wdp: int,
+        debug: bool,
+        config: dict,
+        use_fixed_micro_bsz: bool,
+        fixed_micro_num: int = None,
+        fixed_micro_bsz: int = None,
     ) -> None:
+        """求解器
+
+        Args:
+            world_size (int): GPU数量(现在这个参数没用)
+            global_bsz (int): Global batch size(现在这个参数没用)
+            global_bsz_min (int): global_bsz的搜素上界
+            global_bsz_max (int): global_bsz的搜素下界
+            max_world_size (int): world_size的搜素上界
+            min_world_size (int): world_size的搜素下界
+            seq_len (int):
+            overlap_wdp (int): 是否考虑overlap wdp的通信
+            fixed_micro_num (int): 是否固定micro_num,默认为None不生效
+            fixed_micro_bsz (int): 是否固定micro_bsz ,默认为None不生效
+            debug (bool): 是否输出额外的debug信息
+            config (dict): 模型的config
+        """
+
         self.world_size = world_size
         self.global_bsz = global_bsz  # 4
         self.global_bsz_min = global_bsz_min  # 4
         self.global_bsz_max = global_bsz_max  # 5
         self.max_world_size = max_world_size
         self.min_world_size = min_world_size
+        self.fixed_micro_num = fixed_micro_num
+        self.fixed_micro_bsz = fixed_micro_bsz
+        self.use_fixed_micro_bsz = use_fixed_micro_bsz
         self.debug = debug
         self.overlap_wdp = overlap_wdp
 
@@ -276,6 +299,10 @@ class Constraint:
             if self.debug:
                 print(f"NO solu: build gpc assertion error: {e}", flush=True)
             return None
+        except ZeroDivisionError as e:
+            if self.debug:
+                print(f"NO solu: build gpc ZeroDivisionError error: {e}", flush=True)
+            return None
         else:
             return parallel_conf
 
@@ -319,12 +346,15 @@ class Constraint:
 
         for pp_i, pp in enumerate(pp_search_range):
             for sp_i, sp in enumerate(sp_search_range):
-                bs_bns = self.get_bsz_approximate(world_size, pp, sp, self.seq_len)
-                if bs_bns is None:
-                    if self.debug:
-                        print("NO solu: bs_bns is None!", flush=True)
-                    continue
-                # the layer number should be updated
+                if not self.use_fixed_micro_bsz:
+                    bs_bns = self.get_bsz_approximate(world_size, pp, sp, self.seq_len)
+                    if bs_bns is None:
+                        if self.debug:
+                            print("NO solu: bs_bns is None!", flush=True)
+                        continue
+                else:
+                    bs_bns = [(self.fixed_micro_bsz, self.fixed_micro_num)]
+
                 for micro_bsz, micro_num in bs_bns:
                     now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
                     for algo_type in self._algo_list:
