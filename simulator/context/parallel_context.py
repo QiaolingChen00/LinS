@@ -15,6 +15,7 @@ from typing import Union
 import numpy as np
 import torch
 import torch.distributed as dist
+
 from utils.config import Config
 
 from . import process_group_initializer as pgroup_initializer
@@ -325,7 +326,9 @@ class ParallelContext:
         #     f"({pps}) * tensor parallel size ({tps})"
         # )
         assert self.zero1_parallel_size > 0, f"zero1_parallel_size: {self.zero1_parallel_size} should > 0"
-        assert self.data_parallel_size % self.zero1_parallel_size == 0, f"data_parallel_size:{self.data_parallel_size} % zero1_parallel_size: {self.zero1_parallel_size} != 0"
+        assert (
+            self.data_parallel_size % self.zero1_parallel_size == 0
+        ), f"data_parallel_size:{self.data_parallel_size} % zero1_parallel_size: {self.zero1_parallel_size} != 0"
 
         # check for fsdp:
         # if zo_size < dp_size, ckpts saving will introduce redundent storage for model weights
@@ -475,6 +478,15 @@ class ParallelContext:
             return (max_rank - min_rank) <= 7
 
     def same_group_in_one_node(self, parallel_mode: ParallelMode):
+        """获得一个节点内有多少个相同类型的PG, 在跨节点通信时会存在带宽竞争
+        这里返回的相同PG的数量会乘上每个rank的通信数据量大小
+
+        Args:
+            parallel_mode (ParallelMode):
+
+        Returns:
+            int: 一个节点内相同类型的PG的数量
+        """
         pg_group_ranks = self.get_ranks_in_group(parallel_mode)
         same_node_rank_nums = 0
         for g_rank in pg_group_ranks:

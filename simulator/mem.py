@@ -1,4 +1,4 @@
-from utils.common import _79GB, AlgoType, get_model_config
+from utils.common import AlgoType
 
 
 # 所有公式计算都变成无状态的,计算结果完全由外部传入的参数决定，内部不进行诸如切pp这样的操作
@@ -11,6 +11,7 @@ def get_isp_memory_threshold(
     head_num: int,
     layer_num: int,
     activation_ckpt: int,
+    sp_size: int,
 ):
     """
     Args:
@@ -36,6 +37,7 @@ def get_isp_memory_threshold(
             * sequence_length
             * hidden_dim
             * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+            / sp_size
         )
         * layer_num
         * (1 - activation_ckpt)
@@ -52,6 +54,7 @@ def get_msp_memory_threshold(
     head_num: int,
     layer_num: int,
     activation_ckpt: int,
+    sp_size: int,
 ):
     activation = (
         (
@@ -59,7 +62,7 @@ def get_msp_memory_threshold(
             * micro_batch_size
             * sequence_length
             * hidden_dim
-            * (4 + 30 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+            * (4 + 30 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))
         )
         * layer_num
         * (1 - activation_ckpt)
@@ -76,6 +79,7 @@ def get_fsp_memory_threshold(
     head_num: int,
     layer_num: int,
     activation_ckpt: int,
+    sp_size: int,
 ):
     activation = (
         (
@@ -84,6 +88,7 @@ def get_fsp_memory_threshold(
             * sequence_length
             * hidden_dim
             * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+            / sp_size
         )
         * layer_num
         * (1 - activation_ckpt)
@@ -95,6 +100,17 @@ def get_memory_threshold(
     algo: AlgoType,
     **kwargs,
 ):
+    """get_memory_threshold 获得一层激活的显存占用
+    注意:
+    (1) seqlen一定是没有被sp切过的
+    (2) 公式是基于fp16计算的, 所以传入的 dtype_size 要除以2
+    Args:
+        dtype_size (int): 数据元素大小, 单位B
+        seq_len (int): 没有被切过的seq_len
+
+    Returns:
+        float : 一个layer的显存占用, 单位B
+    """
     if algo == AlgoType.ISP:
         return get_isp_memory_threshold(**kwargs)
     elif algo == AlgoType.MSP:

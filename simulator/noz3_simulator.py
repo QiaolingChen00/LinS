@@ -219,22 +219,23 @@ class Constraint:
         )
         return p2p_latency
 
-    def comm_dp_cost(self, algo, pp_model_element, sp_size) -> float:
+    def comm_dp_cost(self, algo, wp_sp_pp_model_element) -> float:
         """切分OS引入的参数同步的通信开销"""
 
         # zero引入的参数同步开销, 这里传入的是一个dp rank的通信量
         shared_nums = gpc.get_world_size(ParallelMode.ZERO1)
-        buffer_size = self.dtype_size * pp_model_element // shared_nums
+        buffer_size = self.dtype_size * wp_sp_pp_model_element // shared_nums
         zp_latency = shared_nums * broadcast(buffer_size, ParallelMode.ZERO1)
 
         # wdp引入的通信开销, 这里传入的是一个dp rank视角下的通信量
-        # msp和fsp的参数被tp切了，所需需要除以sp_size
+        # msp和fsp的参数被tp切了，需要除以sp_size
+        # isp的参数被wp切了，需要除以wp_size
         if algo == AlgoType.MSP:
-            wdp_latency = allreduce(pp_model_element // sp_size, ParallelMode.WEIGHT_DATA)
+            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.DATA)
         elif algo == AlgoType.FSP:
-            wdp_latency = allreduce(pp_model_element // sp_size, ParallelMode.WEIGHT_DATA)
+            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.DATA)
         elif algo == AlgoType.ISP:
-            wdp_latency = allreduce(pp_model_element, ParallelMode.WEIGHT_DATA)
+            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.WEIGHT_DATA)
 
         return zp_latency, wdp_latency
 
@@ -325,45 +326,53 @@ class Constraint:
                             sp_seq_length = self.seq_len // sp  # 被sp切后的 sequence 长度
 
                             for wp_i, wp in enumerate(wp_search_ranges):
-                                if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp_i > 1:
+                                if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
                                     continue  # msp, fsp禁掉fsdp，我们目前还不支持
+                                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                                    assert wp == 1, f"MSP FSP wp should be equal with 1"
 
                                 # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
-                                zp_search_range = world_size // pp // wp
+                                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                                    zp_search_range = world_size // pp // sp // wp  # 这里的sp对于msp和fsp来说是tp
+                                else:
+                                    zp_search_range = (
+                                        world_size // pp // wp
+                                    )  # internlm实现的zp和deepspeed不一样，zp是在切wp的基础上再切的
 
                                 for zp_i, zp in enumerate(range(zp_search_range)):
-                                    if wp > zp:  # os切分需要大于P/G (这个需要讨论下要不要加, 如果没有这个限制会有额外通信)
-                                        # if self.debug:
-                                        #     print(f"wp:{wp} > zp: {zp}", flush=True)
-                                        continue
                                     if self.debug:
                                         print(
                                             f"------------------- Begin: world_size: {world_size}, pp:{pp}, sp:{sp}, micro_bsz:{micro_bsz}, micro_num:{micro_num}, algo_type:{algo_type}, wp:{wp}, zp:{zp} -------------------",
                                             flush=True,
                                         )
 
-                                    # wp显存消耗
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                        p_g_mm_cost = 2 * self.dtype_size * pp_model_element / wp / sp
+                                        wp_sp_pp_model_element = pp_model_element / wp / sp
                                         tp_hidden_dim = self._h // sp
                                     else:
-                                        p_g_mm_cost = 2 * self.dtype_size * pp_model_element / sp
+                                        wp_sp_pp_model_element = pp_model_element / wp
                                         tp_hidden_dim = self._h
 
-                                    # zp显存消耗
-                                    os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * pp_model_element / zp
+                                    p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
+                                    os_mm_cost = (
+                                        self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element
+                                    )  # zp显存消耗
+
+                                    # 计算dp相关的通信开销
+                                    zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
 
                                     activation = get_memory_threshold(
                                         algo=algo_type,
                                         micro_batch_size=micro_bsz,
-                                        sequence_length=sp_seq_length,
                                         hidden_dim=tp_hidden_dim,
                                         layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
+                                        sp_size=sp,
                                         activation_ckpt=activation_ckpt,
+                                        sequence_length=self.seq_len,  # 这里一定要传入没切过的seqlen
                                         use_fa=self.use_fa,
                                         head_num=self._a,
-                                        dtype_size=self.dtype_size,
-                                    )
+                                        dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
+                                    )  # isp激活的话，不需要除以wp，因为需要allgather
 
                                     # 总显存开销
                                     mem_cost = p_g_mm_cost + os_mm_cost + activation
@@ -387,9 +396,6 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         continue
-
-                                    # 计算dp相关的通信开销
-                                    zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, pp_model_element, sp)
 
                                     (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
@@ -415,7 +421,9 @@ class Constraint:
                                         all_fwd_bwd_cost = grad_acc * fwd_bwd_cost  # 算上梯度累积的fwdbwd开销
                                         pp_comm_cost = 0
                                     else:
-                                        fwd_bwd_cost = micro_num * pp_num_layers * overlaped_fwd_bwd_cost()
+                                        fwd_bwd_cost = (
+                                            pp_num_layers * overlaped_fwd_bwd_cost()
+                                        )  # 1个pp micro step的fwd_bwd开销
                                         all_fwd_bwd_cost = micro_num * fwd_bwd_cost  # pp的idea开销(不含bubble)
                                         pp_p2p_cost = self.pp_comm_overhead(
                                             pp_size=pp,
