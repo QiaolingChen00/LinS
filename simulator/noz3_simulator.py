@@ -67,7 +67,7 @@ class LinsSolutionNoZ3:
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
-            f" tgs: {self.tgs}"
+            f" tgs: {self.tgs *  (-(10**4))}"
             f" pp: {self.pp}"
             f" sp: {self.sp}"
             f" activation ckpt: {self.activation_ckpt}"
