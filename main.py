@@ -97,6 +97,7 @@ def main():
         max_world_size=world_size_max,
         min_world_size=world_size_min,
         debug=True,
+        overlap_wdp=False,
         config=config,
     )
     externl_sim.run_flexible_worldsize_loop()

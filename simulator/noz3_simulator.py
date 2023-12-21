@@ -116,6 +116,7 @@ class Constraint:
         max_world_size,
         min_world_size,
         seq_len,
+        overlap_wdp,
         debug,
         config,
     ) -> None:
@@ -126,6 +127,7 @@ class Constraint:
         self.max_world_size = max_world_size
         self.min_world_size = min_world_size
         self.debug = debug
+        self.overlap_wdp = overlap_wdp
 
         self.seq_len = seq_len
         self.dtype_size = config.dtype_size
@@ -319,6 +321,7 @@ class Constraint:
                     continue
                 # the layer number should be updated
                 for micro_bsz, micro_num in bs_bns:
+                    now_global_bsz = micro_bsz * micro_num * self.seq_len
                     for algo_type in self._algo_list:
                         for activation_ckpt in [0, 1]:
                             pp_model_element = self._param_elements // pp  # 被pp切后的模型参数大小
@@ -360,6 +363,8 @@ class Constraint:
 
                                     # 计算dp相关的通信开销
                                     zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
+                                    if self.overlap_wdp:
+                                        wdp_comm_cost = 0
 
                                     activation = get_memory_threshold(
                                         algo=algo_type,
@@ -438,6 +443,7 @@ class Constraint:
                                     C[pp_i][sp_i][wp_i][zp_i] = (
                                         all_fwd_bwd_cost + pp_comm_cost + wdp_comm_cost + zp_comm_cost
                                     )  # fwd_bwd_cost 乘上梯度累加
+                                    tgs = now_global_bsz / (world_size * C[pp_i][sp_i][wp_i][zp_i])  # 计算tgs
 
                                     solu = LinsSolutionNoZ3(
                                         pp=pp,
@@ -462,7 +468,7 @@ class Constraint:
                                         activation_ckpt=activation_ckpt,
                                     )
 
-                                    cost = C[pp_i][sp_i][wp_i][zp_i]
+                                    cost = tgs
                                     if cost < self.min_comm_cost:
                                         self.min_comm_cost = cost
                                         self.min_cost_solution = solu
