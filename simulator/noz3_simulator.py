@@ -36,6 +36,7 @@ class LinsSolutionNoZ3:
         comp_attn,
         world_size,
         activation_ckpt,
+        tgs,
     ):
         self.pp = pp
         self.sp = sp
@@ -58,6 +59,7 @@ class LinsSolutionNoZ3:
         self.comp_wp = comp_wp
         self.comp_attn = comp_attn
         self.world_size = world_size
+        self.tgs = tgs
 
     def __str__(self):
         return self.__repr__()
@@ -65,15 +67,18 @@ class LinsSolutionNoZ3:
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
+            f" tgs: {self.tgs}"
             f" pp: {self.pp}"
             f" sp: {self.sp}"
             f" activation ckpt: {self.activation_ckpt}"
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
             f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
-            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
+            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms,"
+            f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
-            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, activation: {self.activation/GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, activation: {self.activation/GB:.2f} GB, "
+            f" os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
         )
 
 
@@ -284,7 +289,7 @@ class Constraint:
             self.run_loop(world_size)
 
         if self.min_cost_solution is not None:
-            print("Minimum Communication Cost:", self.min_comm_cost)
+            print("Minimum TGS:", self.min_comm_cost * (-(10**4)))
             print("Solution:", self.min_cost_solution, flush=True)
             if self.msp_min_solu is not None:
                 print(f"self.msp_min_solu : {self.msp_min_solu}")
@@ -326,13 +331,12 @@ class Constraint:
                         for activation_ckpt in [0, 1]:
                             pp_model_element = self._param_elements // pp  # 被pp切后的模型参数大小
                             pp_num_layers = self._l // pp  # 被pp切后的layer数量
-                            sp_seq_length = self.seq_len // sp  # 被sp切后的 sequence 长度
 
                             for wp_i, wp in enumerate(wp_search_ranges):
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
                                     continue  # msp, fsp禁掉fsdp，我们目前还不支持
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                    assert wp == 1, f"MSP FSP wp should be equal with 1"
+                                    assert wp == 1, "MSP FSP wp should be equal with 1"
 
                                 # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
@@ -466,6 +470,7 @@ class Constraint:
                                         comp_attn=comp_attn,
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
+                                        tgs=tgs,
                                     )
 
                                     cost = tgs

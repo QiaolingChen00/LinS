@@ -30,18 +30,17 @@ def get_isp_memory_threshold(
     # TODO: ht mark pp情况下，rank0的激活值会累积pp个micro_bsz，所以这里是不是还得再乘一个pp_size？
     # TODO: wgt mark 应该不需要，每个pp拿到L/pp个layer，又最多保存pp个micro_num的激活，
     # rank0相当于还是L份layer的激活
+    if activation_ckpt:
+        layer_num = 1
+
     activation = (
-        (
-            dtype_size
-            * micro_batch_size
-            * sequence_length
-            * hidden_dim
-            * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
-            / sp_size
-        )
-        * layer_num
-        * (1 - activation_ckpt)
-    )
+        dtype_size
+        * micro_batch_size
+        * sequence_length
+        * hidden_dim
+        * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        / sp_size
+    ) * layer_num
     return activation
 
 
@@ -56,17 +55,16 @@ def get_msp_memory_threshold(
     activation_ckpt: int,
     sp_size: int,
 ):
+    if activation_ckpt:
+        layer_num = 1
+
     activation = (
-        (
-            dtype_size
-            * micro_batch_size
-            * sequence_length
-            * hidden_dim
-            * (4 + 30 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))
-        )
-        * layer_num
-        * (1 - activation_ckpt)
-    )
+        dtype_size
+        * micro_batch_size
+        * sequence_length
+        * hidden_dim
+        * (4 + 30 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))
+    ) * layer_num
     return activation
 
 
@@ -81,18 +79,17 @@ def get_fsp_memory_threshold(
     activation_ckpt: int,
     sp_size: int,
 ):
+    if activation_ckpt:
+        layer_num = 1
+
     activation = (
-        (
-            dtype_size
-            * micro_batch_size
-            * sequence_length
-            * hidden_dim
-            * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
-            / sp_size
-        )
-        * layer_num
-        * (1 - activation_ckpt)
-    )  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
+        dtype_size
+        * micro_batch_size
+        * sequence_length
+        * hidden_dim
+        * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        / sp_size
+    ) * layer_num  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
     return activation
 
 
