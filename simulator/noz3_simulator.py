@@ -321,7 +321,7 @@ class Constraint:
                     continue
                 # the layer number should be updated
                 for micro_bsz, micro_num in bs_bns:
-                    now_global_bsz = micro_bsz * micro_num * self.seq_len
+                    now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
                     for algo_type in self._algo_list:
                         for activation_ckpt in [0, 1]:
                             pp_model_element = self._param_elements // pp  # 被pp切后的模型参数大小
@@ -351,10 +351,8 @@ class Constraint:
 
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
-                                        tp_hidden_dim = self._h // sp
                                     else:
                                         wp_sp_pp_model_element = pp_model_element / wp
-                                        tp_hidden_dim = self._h
 
                                     p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
                                     os_mm_cost = (
@@ -369,10 +367,10 @@ class Constraint:
                                     activation = get_memory_threshold(
                                         algo=algo_type,
                                         micro_batch_size=micro_bsz,
-                                        hidden_dim=tp_hidden_dim,
                                         layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
                                         sp_size=sp,
                                         activation_ckpt=activation_ckpt,
+                                        hidden_dim=self._h,
                                         sequence_length=self.seq_len,  # 这里一定要传入没切过的seqlen
                                         use_fa=self.use_fa,
                                         head_num=self._a,
@@ -443,7 +441,9 @@ class Constraint:
                                     C[pp_i][sp_i][wp_i][zp_i] = (
                                         all_fwd_bwd_cost + pp_comm_cost + wdp_comm_cost + zp_comm_cost
                                     )  # fwd_bwd_cost 乘上梯度累加
-                                    tgs = now_global_bsz / (world_size * C[pp_i][sp_i][wp_i][zp_i])  # 计算tgs
+
+                                    # 计算tgs,为了方便取max这里乘了一个-1
+                                    tgs = -1 * now_global_bsz / (world_size * C[pp_i][sp_i][wp_i][zp_i])
 
                                     solu = LinsSolutionNoZ3(
                                         pp=pp,
