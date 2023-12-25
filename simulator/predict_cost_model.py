@@ -195,6 +195,7 @@ class SplineModel:
                 import pdb
 
                 pdb.set_trace()
+                return OUT_OF_MEM_LATENCY
         else:
             spline_model = self.spline_model_list[cost_type][world_size]
             try:

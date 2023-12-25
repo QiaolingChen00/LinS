@@ -6,10 +6,10 @@ from simulator.context import ParallelMode, check_and_modify_parallel_config
 from simulator.context import global_context as gpc
 from simulator.mem import (
     get_block_output_mm,
-    get_norm_output_mm,
     get_embedding_output_mm,
     get_head_output_mm,
     get_memory_threshold,
+    get_norm_output_mm,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -47,6 +47,8 @@ class LinsSolutionNoZ3:
         norm_activation,
         head_activation,
         block_activation,
+        wdp_comm_cost,
+        all_fwd_bwd_cost,
     ):
         self.pp = pp
         self.sp = sp
@@ -76,6 +78,9 @@ class LinsSolutionNoZ3:
         self.head_activation = head_activation
         self.block_activation = block_activation
 
+        self.wdp_comm_cost = wdp_comm_cost
+        self.all_fwd_bwd_cost = all_fwd_bwd_cost
+
     def __str__(self):
         return self.__repr__()
 
@@ -89,11 +94,12 @@ class LinsSolutionNoZ3:
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
             f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
-            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms,"
-            f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
-            f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
-            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
+            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms, \n"
+            f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms \n"
+            f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB \n"
+            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
+            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
 
 
@@ -181,7 +187,7 @@ class Constraint:
         self._param_elements = self.model_size * 10**9
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
+        self._algo_list = [AlgoType.FSP]  # AlgoType.ISP, AlgoType.MSP,
 
         self.min_comm_cost, self.msp_min_cost, self.fsp_min_cost, self.isp_min_cost = (
             float("inf"),
@@ -269,7 +275,7 @@ class Constraint:
 
         # zero引入的参数同步开销, 这里传入的是一个dp rank的通信量
         shared_nums = gpc.get_world_size(ParallelMode.ZERO1)
-        buffer_size = self.dtype_size * wp_sp_pp_model_element // shared_nums
+        buffer_size = self.dtype_size * wp_sp_pp_model_element / shared_nums
         zp_latency = shared_nums * broadcast(buffer_size, ParallelMode.ZERO1)
 
         # wdp引入的通信开销, 这里传入的是一个dp rank视角下的通信量
@@ -371,11 +377,15 @@ class Constraint:
                     bs_bns = [(self.fixed_micro_bsz, self.fixed_micro_num)]
 
                 for micro_bsz, micro_num in bs_bns:
-                    now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
                     for algo_type in self._algo_list:
-                        for activation_ckpt in [0, 1]:
-                            pp_model_element = self._param_elements // pp  # 被pp切后的模型参数大小
-                            pp_num_layers = self._l // pp  # 被pp切后的layer数量
+                        for activation_ckpt in [0]:  # , 1
+                            pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
+                            pp_num_layers, left = divmod(self._l, pp)
+                            if left != 0:
+                                if self.debug:
+                                    print("NO solu: layer nums % pp != 0!", flush=True)
+                                continue
+                            # pp_num_layers += left
 
                             for wp_i, wp in enumerate(wp_search_ranges):
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
@@ -398,6 +408,18 @@ class Constraint:
                                             flush=True,
                                         )
 
+                                    # 反碎片化惩罚
+                                    if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                                        if sp * zp * wp * pp < 4:
+                                            if self.debug:
+                                                print(f"NO solu: skip sp*zp*wp*pp< 4 solu!", flush=True)
+                                            continue
+                                    else:
+                                        if zp * wp * pp < 4:
+                                            if self.debug:
+                                                print(f"NO solu: skip zp*wp*pp< 4 solu!", flush=True)
+                                            continue
+
                                     # build device mesh
                                     parallel_conf = self.build_parallel_config(
                                         algo_type, world_size, pp, sp, wp=wp, zp=zp
@@ -406,6 +428,10 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         continue
+
+                                    now_global_bsz = (
+                                        micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
+                                    )
 
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
@@ -419,6 +445,7 @@ class Constraint:
 
                                     # 计算dp相关的通信开销
                                     zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
+                                    # zp_comm_cost=0
                                     if self.overlap_wdp:
                                         wdp_comm_cost = 0
 
@@ -482,12 +509,7 @@ class Constraint:
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (
-                                        wp_comm_cost,
-                                        sp_comm_cost,
-                                        comp_wp,
-                                        comp_attn,
-                                    ) = TransformerOverlapOneLayer(
+                                    (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
                                         sp_size=sp,
                                         pp_size=pp,
@@ -530,7 +552,7 @@ class Constraint:
                                     )  # fwd_bwd_cost 乘上梯度累加
 
                                     # 计算tgs,为了方便取max这里乘了一个-1
-                                    tgs = -1 * now_global_bsz / (world_size * C[pp_i][sp_i][wp_i][zp_i])
+                                    tgs = (-1 * now_global_bsz) / (world_size * C[pp_i][sp_i][wp_i][zp_i])
 
                                     solu = LinsSolutionNoZ3(
                                         pp=pp,
@@ -558,6 +580,8 @@ class Constraint:
                                         norm_activation=norm_activation,
                                         head_activation=head_activation,
                                         block_activation=block_activation,
+                                        wdp_comm_cost=wdp_comm_cost,
+                                        all_fwd_bwd_cost=all_fwd_bwd_cost,
                                     )
 
                                     cost = tgs
