@@ -4,7 +4,12 @@ import math
 from simulator.ab_cost_model import allreduce, broadcast, p2p
 from simulator.context import ParallelMode, check_and_modify_parallel_config
 from simulator.context import global_context as gpc
-from simulator.mem import get_memory_threshold
+from simulator.mem import (
+    get_block_output_mm,
+    get_embedding_output_mm,
+    get_head_output_mm,
+    get_memory_threshold,
+)
 from simulator.overlap import TransformerOverlapOneLayer
 
 # from comm import TransformerCommunication
@@ -37,6 +42,9 @@ class LinsSolutionNoZ3:
         world_size,
         activation_ckpt,
         tgs,
+        embedding_activation,
+        head_activation,
+        block_activation,
     ):
         self.pp = pp
         self.sp = sp
@@ -61,6 +69,10 @@ class LinsSolutionNoZ3:
         self.world_size = world_size
         self.tgs = tgs
 
+        self.embedding_activation = embedding_activation
+        self.head_activation = head_activation
+        self.block_activation = block_activation
+
     def __str__(self):
         return self.__repr__()
 
@@ -77,8 +89,8 @@ class LinsSolutionNoZ3:
             f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms,"
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
-            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, activation: {self.activation/GB:.2f} GB, "
-            f" os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
+            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
 
 
@@ -383,6 +395,15 @@ class Constraint:
                                             flush=True,
                                         )
 
+                                    # build device mesh
+                                    parallel_conf = self.build_parallel_config(
+                                        algo_type, world_size, pp, sp, wp=wp, zp=zp
+                                    )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
+                                    if parallel_conf is None:
+                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
+                                        C[pp_i][sp_i][wp_i][zp_i] = 0
+                                        continue
+
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
                                     else:
@@ -411,8 +432,23 @@ class Constraint:
                                         dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
                                     )  # isp激活的话，不需要除以wp，因为需要allgather
 
+                                    # 下面这些激活的计算不受到重计算的影响
+                                    embedding_activation = get_embedding_output_mm(
+                                        micro_bsz, self.seq_len, self._h, sp=sp, algo=algo_type
+                                    )
+                                    head_activation = get_head_output_mm(self._h, self.vocab_size)
+                                    # 对于pp0,占用的激活仍然是 layer_num 份
+                                    block_activation = (
+                                        pp_num_layers
+                                        * pp
+                                        * get_block_output_mm(micro_bsz, self.seq_len, self._h, sp=sp)
+                                    ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
+                                    activation = activation + embedding_activation + head_activation + block_activation
+
                                     # 总显存开销
-                                    mem_cost = p_g_mm_cost + os_mm_cost + activation
+                                    mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
+                                    mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
+                                    mem_cost = max(mem_cost1, mem_cost2)
                                     if mem_cost > _79GB:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
@@ -424,15 +460,6 @@ class Constraint:
                                         continue
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
-
-                                    # build device mesh
-                                    parallel_conf = self.build_parallel_config(
-                                        algo_type, world_size, pp, sp, wp=wp, zp=zp
-                                    )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
-                                    if parallel_conf is None:
-                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
-                                        C[pp_i][sp_i][wp_i][zp_i] = 0
-                                        continue
 
                                     (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
@@ -501,6 +528,9 @@ class Constraint:
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
                                         tgs=tgs,
+                                        embedding_activation=embedding_activation,
+                                        head_activation=head_activation,
+                                        block_activation=block_activation,
                                     )
 
                                     cost = tgs
