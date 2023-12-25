@@ -190,7 +190,7 @@ class Constraint:
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.FSP]  # AlgoType.ISP, AlgoType.MSP,
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  # 
 
         self.min_comm_cost, self.msp_min_cost, self.fsp_min_cost, self.isp_min_cost = (
             float("inf"),
@@ -381,7 +381,7 @@ class Constraint:
 
                 for micro_bsz, micro_num in bs_bns:
                     for algo_type in self._algo_list:
-                        for activation_ckpt in [0]:  # , 1
+                        for activation_ckpt in [0, 1]:
                             pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
                             pp_num_layers, left = divmod(self._l, pp)
                             if left != 0:
