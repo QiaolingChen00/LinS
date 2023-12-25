@@ -148,6 +148,19 @@ def get_head_output_mm(seq_len, vocab_size, dtype_size):
     return dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
 
+def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
+    mlp_hidden_size = int(hidden_size * mlp_ratio)
+    mlp_hidden_size = 256 * ((mlp_hidden_size + 256 - 1) // 256)
+    module_Wqkv = 3 * hidden_size * hidden_size * dtype_size
+    module_out_proj = hidden_size * hidden_size * dtype_size
+    module_w1 = mlp_hidden_size * hidden_size * dtype_size
+    module_w2 = mlp_hidden_size * hidden_size * dtype_size
+    module_w3 = hidden_size * mlp_hidden_size * dtype_size
+    prefetch_two_layers_weight = 2 * (module_Wqkv + module_out_proj + module_w1 + module_w2 + module_w3)
+
+    return prefetch_two_layers_weight * 2  # all_gather + reduce_scatter approximately
+
+
 def get_memory_threshold(
     algo: AlgoType,
     **kwargs,

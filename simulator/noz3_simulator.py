@@ -8,8 +8,9 @@ from simulator.mem import (
     get_block_output_mm,
     get_embedding_output_mm,
     get_head_output_mm,
+    get_memory_pool_mm,
     get_memory_threshold,
-    get_norm_output_mm,
+    get_norm_output_mm
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -43,6 +44,7 @@ class LinsSolutionNoZ3:
         world_size,
         activation_ckpt,
         tgs,
+        mem_pool_mm,
         embedding_activation,
         norm_activation,
         head_activation,
@@ -73,6 +75,7 @@ class LinsSolutionNoZ3:
         self.world_size = world_size
         self.tgs = tgs
 
+        self.mem_pool_mm = mem_pool_mm
         self.embedding_activation = embedding_activation
         self.norm_activation = norm_activation
         self.head_activation = head_activation
@@ -97,7 +100,7 @@ class LinsSolutionNoZ3:
             f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms, \n"
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms \n"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
-            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB \n"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
             f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
@@ -184,7 +187,7 @@ class Constraint:
         self.vocab_size = config.vocab_size
         self.use_fa = config.use_fa
         self.fp32_ratio = max(1, 4 // self.dtype_size)
-        self._param_elements = self.model_size * 10**9
+        self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
         self._algo_list = [AlgoType.FSP]  # AlgoType.ISP, AlgoType.MSP,
@@ -337,7 +340,7 @@ class Constraint:
             self.run_loop(world_size)
 
         if self.min_cost_solution is not None:
-            print("Minimum TGS:", self.min_comm_cost * (-(10**4)))
+            print("Max TGS:", self.min_comm_cost * (-(10**4)))
             print("Solution:", self.min_cost_solution, flush=True)
             if self.msp_min_solu is not None:
                 print(f"self.msp_min_solu : {self.msp_min_solu}")
@@ -462,6 +465,10 @@ class Constraint:
                                         dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
                                     )  # isp激活的话，不需要除以wp，因为需要allgather
 
+                                    isp_mem_pool = 0
+                                    if algo_type == AlgoType.ISP:
+                                        isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
+
                                     # 下面这些激活的计算不受到重计算的影响
                                     embedding_activation = get_embedding_output_mm(
                                         micro_bsz,
@@ -491,6 +498,7 @@ class Constraint:
                                         + norm_activation
                                         + head_activation
                                         + block_activation
+                                        + isp_mem_pool
                                     )
 
                                     # 总显存开销
@@ -576,6 +584,7 @@ class Constraint:
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
                                         tgs=tgs,
+                                        mem_pool_mm=isp_mem_pool,
                                         embedding_activation=embedding_activation,
                                         norm_activation=norm_activation,
                                         head_activation=head_activation,
