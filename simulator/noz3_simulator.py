@@ -90,7 +90,7 @@ class LinsSolutionNoZ3:
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation: {self.block_activation/GB:.2f} GB"
+            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
 
 
@@ -395,6 +395,15 @@ class Constraint:
                                             flush=True,
                                         )
 
+                                    # build device mesh
+                                    parallel_conf = self.build_parallel_config(
+                                        algo_type, world_size, pp, sp, wp=wp, zp=zp
+                                    )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
+                                    if parallel_conf is None:
+                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
+                                        C[pp_i][sp_i][wp_i][zp_i] = 0
+                                        continue
+
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
                                     else:
@@ -425,16 +434,16 @@ class Constraint:
 
                                     # 下面这些激活的计算不受到重计算的影响
                                     embedding_activation = get_embedding_output_mm(
-                                        micro_bsz, self.seq_len, self._h, sp=sp
+                                        micro_bsz, self.seq_len, self._h, sp=sp, algo=algo_type
                                     )
-                                    head_activation = get_head_output_mm(self._h, self.vocab_size, algo=algo_type)
+                                    head_activation = get_head_output_mm(self._h, self.vocab_size)
                                     # 对于pp0,占用的激活仍然是 layer_num 份
                                     block_activation = (
                                         pp_num_layers
                                         * pp
                                         * get_block_output_mm(micro_bsz, self.seq_len, self._h, sp=sp)
-                                    )
-                                    activation += embedding_activation + head_activation + block_activation
+                                    ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
+                                    activation = activation + embedding_activation + head_activation + block_activation
 
                                     # 总显存开销
                                     mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
@@ -451,15 +460,6 @@ class Constraint:
                                         continue
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
-
-                                    # build device mesh
-                                    parallel_conf = self.build_parallel_config(
-                                        algo_type, world_size, pp, sp, wp=wp, zp=zp
-                                    )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
-                                    if parallel_conf is None:
-                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
-                                        C[pp_i][sp_i][wp_i][zp_i] = 0
-                                        continue
 
                                     (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,

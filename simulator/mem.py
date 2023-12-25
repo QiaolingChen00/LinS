@@ -116,28 +116,27 @@ def get_fsp_memory_threshold(
 # 这里只计算一层的激活，不受pp影响
 
 # embedding output
-def get_embedding_output_mm(micro_bsz, seq_len, hidden_dim, sp):
+def get_embedding_output_mm(micro_bsz, seq_len, hidden_dim, sp, algo):
     # [b, hidden_dim, seql_len]
-    # sp_worldsize = gpc.get_world_size(ParallelMode.SEQUENCE)
+    # sp的world_size是从tp的pg中获得的
+    sp_worldsize = gpc.get_world_size(ParallelMode.TENSOR)
     # assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
+    assert sp_worldsize == sp, f"sp={sp}, sp_world_size:{sp_worldsize}, algo: {algo}"
     return micro_bsz * seq_len * hidden_dim // sp
 
 
 # block output
 def get_block_output_mm(micro_bsz, seq_len, hidden_dim, sp):
     # [hidden_dim, packed_length]
-    # sp_worldsize = gpc.get_world_size(ParallelMode.SEQUENCE)
-    # assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
+    sp_worldsize = gpc.get_world_size(ParallelMode.TENSOR)
+    assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
     return micro_bsz * seq_len * hidden_dim // sp
 
 
 # head output
-def get_head_output_mm(hidden_dim, vocab_size, algo):
+def get_head_output_mm(hidden_dim, vocab_size):
     # [hidden_dim, vocab_size]
-    if algo in [AlgoType.MSP, AlgoType.FSP]:
-        return hidden_dim * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
-    else:
-        return hidden_dim * vocab_size
+    return hidden_dim * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
 
 def get_memory_threshold(
