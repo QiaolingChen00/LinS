@@ -115,6 +115,7 @@ def get_fsp_memory_threshold(
 # WP不省激活，因此不受wp影响
 # 这里只计算一层的激活，不受pp影响
 
+
 # embedding output
 def get_embedding_output_mm(micro_bsz, seq_len, hidden_dim, sp, algo, dtype_size):
     # [b, hidden_dim, seql_len]
@@ -133,10 +134,18 @@ def get_block_output_mm(micro_bsz, seq_len, hidden_dim, sp, dtype_size):
     return dtype_size * micro_bsz * seq_len * hidden_dim // sp
 
 
+# norm output
+def get_norm_output_mm(micro_bsz, seq_len, hidden_dim, sp, dtype_size):
+    # [hidden_dim, packed_length]
+    sp_worldsize = gpc.get_world_size(ParallelMode.TENSOR)
+    assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
+    return 4 * micro_bsz * seq_len * hidden_dim // sp
+
+
 # head output
-def get_head_output_mm(hidden_dim, vocab_size, dtype_size):
+def get_head_output_mm(seq_len, vocab_size, dtype_size):
     # [hidden_dim, vocab_size]
-    return dtype_size * hidden_dim * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
+    return dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
 
 def get_memory_threshold(

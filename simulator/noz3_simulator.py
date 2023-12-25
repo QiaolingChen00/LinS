@@ -6,6 +6,7 @@ from simulator.context import ParallelMode, check_and_modify_parallel_config
 from simulator.context import global_context as gpc
 from simulator.mem import (
     get_block_output_mm,
+    get_norm_output_mm,
     get_embedding_output_mm,
     get_head_output_mm,
     get_memory_threshold,
@@ -43,6 +44,7 @@ class LinsSolutionNoZ3:
         activation_ckpt,
         tgs,
         embedding_activation,
+        norm_activation,
         head_activation,
         block_activation,
     ):
@@ -70,6 +72,7 @@ class LinsSolutionNoZ3:
         self.tgs = tgs
 
         self.embedding_activation = embedding_activation
+        self.norm_activation = norm_activation
         self.head_activation = head_activation
         self.block_activation = block_activation
 
@@ -90,7 +93,7 @@ class LinsSolutionNoZ3:
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
+            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
 
 
@@ -388,7 +391,7 @@ class Constraint:
                                         world_size // pp // wp
                                     )  # internlm实现的zp和deepspeed不一样，zp是在切wp的基础上再切的
 
-                                for zp_i, zp in enumerate(range(zp_search_range)):
+                                for zp_i, zp in enumerate(range(1, zp_search_range)):
                                     if self.debug:
                                         print(
                                             f"------------------- Begin: world_size: {world_size}, pp:{pp}, sp:{sp}, micro_bsz:{micro_bsz}, micro_num:{micro_num}, algo_type:{algo_type}, wp:{wp}, zp:{zp} -------------------",
@@ -411,7 +414,7 @@ class Constraint:
 
                                     p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
                                     os_mm_cost = (
-                                        self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element
+                                        self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element / zp
                                     )  # zp显存消耗
 
                                     # 计算dp相关的通信开销
@@ -441,8 +444,11 @@ class Constraint:
                                         algo=algo_type,
                                         dtype_size=self.dtype_size,
                                     )
+                                    norm_activation = get_norm_output_mm(
+                                        micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
+                                    )
                                     head_activation = get_head_output_mm(
-                                        self._h, self.vocab_size, dtype_size=self.dtype_size
+                                        self.seq_len, self.vocab_size, dtype_size=self.dtype_size
                                     )
                                     # 对于pp0,占用的激活仍然是 layer_num 份
                                     block_activation = (
@@ -452,7 +458,13 @@ class Constraint:
                                             micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
                                         )
                                     ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
-                                    activation = activation + embedding_activation + head_activation + block_activation
+                                    activation = (
+                                        activation
+                                        + embedding_activation
+                                        + norm_activation
+                                        + head_activation
+                                        + block_activation
+                                    )
 
                                     # 总显存开销
                                     mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
@@ -470,7 +482,12 @@ class Constraint:
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                    (
+                                        wp_comm_cost,
+                                        sp_comm_cost,
+                                        comp_wp,
+                                        comp_attn,
+                                    ) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
                                         sp_size=sp,
                                         pp_size=pp,
@@ -538,6 +555,7 @@ class Constraint:
                                         activation_ckpt=activation_ckpt,
                                         tgs=tgs,
                                         embedding_activation=embedding_activation,
+                                        norm_activation=norm_activation,
                                         head_activation=head_activation,
                                         block_activation=block_activation,
                                     )
