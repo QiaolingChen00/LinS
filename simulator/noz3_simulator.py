@@ -10,6 +10,7 @@ from simulator.mem import (
     get_embedding_output_mm,
     get_head_output_mm,
     get_memory_threshold,
+    get_memory_pool_mm,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -43,6 +44,7 @@ class LinsSolutionNoZ3:
         world_size,
         activation_ckpt,
         tgs,
+        mem_pool_mm,
         embedding_activation,
         norm_activation,
         head_activation,
@@ -71,6 +73,7 @@ class LinsSolutionNoZ3:
         self.world_size = world_size
         self.tgs = tgs
 
+        self.mem_pool_mm = mem_pool_mm
         self.embedding_activation = embedding_activation
         self.norm_activation = norm_activation
         self.head_activation = head_activation
@@ -93,7 +96,7 @@ class LinsSolutionNoZ3:
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
+            f" total activation: {self.activation/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
         )
 
 
@@ -178,7 +181,7 @@ class Constraint:
         self.vocab_size = config.vocab_size
         self.use_fa = config.use_fa
         self.fp32_ratio = max(1, 4 // self.dtype_size)
-        self._param_elements = self.model_size * 10**9
+        self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
         self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
@@ -331,7 +334,7 @@ class Constraint:
             self.run_loop(world_size)
 
         if self.min_cost_solution is not None:
-            print("Minimum TGS:", self.min_comm_cost * (-(10**4)))
+            print("Max TGS:", self.min_comm_cost * (-(10**4)))
             print("Solution:", self.min_cost_solution, flush=True)
             if self.msp_min_solu is not None:
                 print(f"self.msp_min_solu : {self.msp_min_solu}")
@@ -371,7 +374,6 @@ class Constraint:
                     bs_bns = [(self.fixed_micro_bsz, self.fixed_micro_num)]
 
                 for micro_bsz, micro_num in bs_bns:
-                    now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
                     for algo_type in self._algo_list:
                         for activation_ckpt in [0, 1]:
                             pp_model_element = self._param_elements // pp  # 被pp切后的模型参数大小
@@ -407,6 +409,10 @@ class Constraint:
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         continue
 
+                                    now_global_bsz = (
+                                        micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
+                                    )
+
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
                                     else:
@@ -434,6 +440,10 @@ class Constraint:
                                         head_num=self._a,
                                         dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
                                     )  # isp激活的话，不需要除以wp，因为需要allgather
+
+                                    isp_mem_pool = 0
+                                    if algo_type == AlgoType.ISP:
+                                        isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
 
                                     # 下面这些激活的计算不受到重计算的影响
                                     embedding_activation = get_embedding_output_mm(
@@ -464,6 +474,7 @@ class Constraint:
                                         + norm_activation
                                         + head_activation
                                         + block_activation
+                                        + isp_mem_pool
                                     )
 
                                     # 总显存开销
@@ -554,6 +565,7 @@ class Constraint:
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
                                         tgs=tgs,
+                                        mem_pool_mm=isp_mem_pool,
                                         embedding_activation=embedding_activation,
                                         norm_activation=norm_activation,
                                         head_activation=head_activation,
