@@ -434,14 +434,23 @@ class Constraint:
 
                                     # 下面这些激活的计算不受到重计算的影响
                                     embedding_activation = get_embedding_output_mm(
-                                        micro_bsz, self.seq_len, self._h, sp=sp, algo=algo_type
+                                        micro_bsz,
+                                        self.seq_len,
+                                        self._h,
+                                        sp=sp,
+                                        algo=algo_type,
+                                        dtype_size=self.dtype_size,
                                     )
-                                    head_activation = get_head_output_mm(self._h, self.vocab_size)
+                                    head_activation = get_head_output_mm(
+                                        self._h, self.vocab_size, dtype_size=self.dtype_size
+                                    )
                                     # 对于pp0,占用的激活仍然是 layer_num 份
                                     block_activation = (
                                         pp_num_layers
                                         * pp
-                                        * get_block_output_mm(micro_bsz, self.seq_len, self._h, sp=sp)
+                                        * get_block_output_mm(
+                                            micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
+                                        )
                                     ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
                                     activation = activation + embedding_activation + head_activation + block_activation
 
