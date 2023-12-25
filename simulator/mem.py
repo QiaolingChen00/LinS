@@ -1,3 +1,5 @@
+from simulator.context import ParallelMode
+from simulator.context import global_context as gpc
 from utils.common import AlgoType
 
 
@@ -91,6 +93,51 @@ def get_fsp_memory_threshold(
         / sp_size
     ) * layer_num  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
     return activation
+
+
+# tp=1,sp=1
+# seql_len=512, hidden_dim 4096, no tp,sp
+# embed shape: torch.Size([1, 4096, 512]) 1
+# block shape: torch.Size([4096, 512])
+# head shape: torch.Size([4096, 103168])
+
+# tp=4,sp=1
+# seql_len=512, hidden_dim 4096
+# embed shape: torch.Size([1, 4096, 512])
+# block shape: torch.Size([4096, 512])
+# head shape: torch.Size([4096, 25792])
+
+# tp=4,sp=4
+# embed shape: torch.Size([1, 1024, 512])
+# block shape: torch.Size([1024, 512])
+# head shape: torch.Size([4096, 25792])
+
+# WP不省激活，因此不受wp影响
+# 这里只计算一层的激活，不受pp影响
+
+# embedding output
+def get_embedding_output_mm(micro_bsz, seq_len, hidden_dim, sp):
+    # [b, hidden_dim, seql_len]
+    # sp_worldsize = gpc.get_world_size(ParallelMode.SEQUENCE)
+    # assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
+    return micro_bsz * seq_len * hidden_dim // sp
+
+
+# block output
+def get_block_output_mm(micro_bsz, seq_len, hidden_dim, sp):
+    # [hidden_dim, packed_length]
+    # sp_worldsize = gpc.get_world_size(ParallelMode.SEQUENCE)
+    # assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
+    return micro_bsz * seq_len * hidden_dim // sp
+
+
+# head output
+def get_head_output_mm(hidden_dim, vocab_size, algo):
+    # [hidden_dim, vocab_size]
+    if algo in [AlgoType.MSP, AlgoType.FSP]:
+        return hidden_dim * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
+    else:
+        return hidden_dim * vocab_size
 
 
 def get_memory_threshold(
