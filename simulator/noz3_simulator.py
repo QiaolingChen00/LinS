@@ -11,6 +11,7 @@ from simulator.mem import (
     get_memory_pool_mm,
     get_memory_threshold,
     get_norm_output_mm,
+    get_p2p_buffer_size,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -52,6 +53,7 @@ class LinsSolutionNoZ3:
         wdp_comm_cost,
         all_fwd_bwd_cost,
         g_bsz,
+        pp_p2p_buffer,
     ):
         self.pp = pp
         self.sp = sp
@@ -85,6 +87,7 @@ class LinsSolutionNoZ3:
         self.wdp_comm_cost = wdp_comm_cost
         self.all_fwd_bwd_cost = all_fwd_bwd_cost
         self.g_bsz = g_bsz
+        self.pp_p2p_buffer = pp_p2p_buffer
 
     def __str__(self):
         return self.__repr__()
@@ -105,7 +108,7 @@ class LinsSolutionNoZ3:
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
-            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB \n"
+            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} \n"
         )
 
 
@@ -269,12 +272,12 @@ class Constraint:
     def pp_bubble_fraction(pp_size, micro_num):
         return pp_size - 1 / micro_num
 
-    def pp_comm_overhead(self, pp_size, sp_size, seq_len, micro_bsz, micro_num):
+    def pp_comm_overhead(self, pp_size, sp_size, micro_bsz, micro_num):
         """计算pp中p2p通信的延迟"""
         if pp_size == 1:
             return 0
 
-        p2p_buffer_size = self.dtype_size * (seq_len // sp_size) * micro_bsz * self._h
+        p2p_buffer_size = get_p2p_buffer_size(self.dtype_size, self.seq_len, sp_size, micro_bsz, self._h)
 
         warmup_p2p_num = min(pp_size, micro_num)
         one_f_one_b_p2p_num = micro_num - 1
@@ -487,6 +490,12 @@ class Constraint:
                                     if algo_type == AlgoType.ISP:
                                         isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
 
+                                    pp_p2p_buffer = (
+                                        get_p2p_buffer_size(self.dtype_size, self.seq_len, sp, micro_bsz, self._h)
+                                        if pp > 1
+                                        else 0
+                                    )
+
                                     # 下面这些激活的计算不受到重计算的影响
                                     embedding_activation = get_embedding_output_mm(
                                         micro_bsz,
@@ -517,6 +526,7 @@ class Constraint:
                                         + head_activation
                                         + block_activation
                                         + isp_mem_pool
+                                        + pp_p2p_buffer
                                     )
 
                                     # 总显存开销
@@ -568,7 +578,6 @@ class Constraint:
                                             sp_size=sp,
                                             micro_bsz=micro_bsz,
                                             micro_num=micro_num,
-                                            seq_len=self.seq_len,
                                         )  # pp的p2p延迟
                                         pp_bubble_cost = (pp - 1) * fwd_bwd_cost  # pp的bubble开销
                                         pp_comm_cost = pp_p2p_cost + pp_bubble_cost  # pp总的额外开销
@@ -610,6 +619,7 @@ class Constraint:
                                         wdp_comm_cost=wdp_comm_cost,
                                         all_fwd_bwd_cost=all_fwd_bwd_cost,
                                         g_bsz=now_global_bsz,
+                                        pp_p2p_buffer=pp_p2p_buffer,
                                     )
 
                                     cost = tgs

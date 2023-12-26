@@ -70,14 +70,14 @@ def main():
         }
     )
 
+    GLOBA_BSZ = 256 * 1024 * 16
     config = Config(
         {
             "world_size_max": 128,
             "world_size_min": 128,
-            "global_bsz": 256 * 1024 * 8,
-            "global_bsz_min": 256 * 1024 * 8,
-            "global_bsz_max": 256 * 1024 * 8,
-            "global_batch_size": 4 * 1024 * 1024,
+            "global_bsz": GLOBA_BSZ,
+            "global_bsz_min": GLOBA_BSZ,
+            "global_bsz_max": GLOBA_BSZ,
             "sequence_length": 256 * 1024,
             "model_size": 65,
             "vocab_size": 103168,
