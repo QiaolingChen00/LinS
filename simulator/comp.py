@@ -10,7 +10,7 @@ def get_atten_cost_polynomial(complexity):
     return int(1000 * 10 * get_predict_or_kv_cost(CostType.LINEAR, complexity))
 
 
-def get_atten_cost_predict(micro_bsz, seq_len, head_dim):
+def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
     predict = (
         1000
         * 10
@@ -20,6 +20,8 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim):
             micro_bsz=micro_bsz,
             seq_len=seq_len,
             embed_dim=head_dim,
+            num_heads=num_heads,
+            tp_size=sp_tp,
         )
     )
 
@@ -31,6 +33,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim):
 class TransformerComputation:
     def __init__(
         self,
+        a,
         b,
         s,
         h,
@@ -43,6 +46,7 @@ class TransformerComputation:
         cost_data=None,
         ckpt=0,
     ):
+        self.a = a
         self.b = b  # Batch size
         self.s = s  # Sequence length
         self.h = h  # Hidden size
@@ -116,7 +120,7 @@ class TransformerComputation:
         compute the latency for attention in one transformer layer
         """
         if self.use_fa:
-            total_latency = get_atten_cost_predict(self.b, self.s, self.h)
+            total_latency = get_atten_cost_predict(self.b, self.s, self.h, self.a, self.sp_scale)
         else:
             # QK^T matrix multiplication
             # (b, s, h/sp) * (b, s, h/sp)^T

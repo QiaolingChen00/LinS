@@ -93,15 +93,20 @@ def run_profile(args, test_type):
         world_size = get_world_size()
         if world_size not in re_results:
             re_results[world_size] = {}
+
         try:
             bench = BENCH(**filter_kwargs(BENCH.__init__, test_case))
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
-            test_case["lat"] = OUT_OF_MEM_LATENCY
+            continue
+        except AssertionError:
+            # torch.cuda.empty_cache()
+            continue
         else:
             sync_all()
             avg_duration = run_benchmark(bench, args)
             test_case["lat"] = avg_duration
+            print(f"{bench.complexity()}: seq_len: {test_case['seq_len']}, num_heads_and_hidden_dim: {test_case['num_heads_and_hidden_dim']}, tp_size {test_case['tp_size']}, lat: {test_case['lat']}", flush=True)
 
         # assert bench.complexity() not in re_results
         # re_results[bench.complexity()] = test_case
@@ -110,7 +115,7 @@ def run_profile(args, test_type):
         else:
             if get_global_rank() == 0:
                 print(
-                    f"Warning same complexity: {test_case['lat']:.3f} {re_results[world_size][bench.complexity()][0]['lat']:.5f}"
+                    f"Warning same complexity: {bench.complexity()}"
                 )
 
     return re_results

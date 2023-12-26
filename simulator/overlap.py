@@ -32,7 +32,7 @@ class TransformerOverlapOneLayer:
         self.world_size = world_size
         self.pp_size = pp_size
 
-        self.h, self._a, self.mlp_ratio, self.multiple_of = hidden_dim, num_head, mlp_ratio, multiple_of
+        self.h, self.a, self.mlp_ratio, self.multiple_of = hidden_dim, num_head, mlp_ratio, multiple_of
 
         self.ckpt = ckpt  # the activation checkpoint
 
@@ -51,6 +51,7 @@ class TransformerOverlapOneLayer:
 
         # 一个transformer layer的计算时延 (forward + backward)
         comp_wp, comp_attn = TransformerComputation(
+            self.a,
             self.b,
             self.s,
             self.h,

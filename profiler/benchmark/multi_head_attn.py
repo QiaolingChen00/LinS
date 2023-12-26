@@ -8,7 +8,7 @@ import torch
 from einops import rearrange
 from torch import nn
 
-# from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
+from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
 from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import K, get_local_rank
 
@@ -38,71 +38,67 @@ class MHA(nn.Module):
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitMultiHeadAttn(UnitBench):
     test_loop = {
-        "seq_len": [int(0.5 * K), 1 * K, 2 * K, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K, 128 * K, 256 * K],
+        "seq_len": [int(0.25 * K), int(0.5 * K), 1 * K, 2 * K, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K, 128 * K],
         "num_heads_and_hidden_dim": [(32, 4096), (40, 5120), (48, 6144), (64, 8192), (80, 10240)],
+        # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
         "dtype": [torch.bfloat16],
         "micro_bsz": [1, 2, 4, 8],
+        "tp_size": [1, 2, 4, 8, 16, 32, 64],
     }
 
-    def __init__(self, seq_len, micro_bsz, num_heads_and_hidden_dim, dtype) -> None:
+    def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size) -> None:
         num_heads, embed_dim = num_heads_and_hidden_dim
         self.sp_size = 1
-        self.tp_size = 1
+        self.tp_size = tp_size
         self.seq_len = seq_len
         self.num_heads = num_heads
         self.embed_dim = embed_dim
         self.dtype = dtype
         self.dtype_size = 2 if self.dtype == torch.bfloat16 else 4
-        self.seq_len_sp = self.seq_len // self.sp_size
-        self.num_attn_head_tp = self.num_heads // self.tp_size
-        self.head_dim = self.embed_dim // self.num_heads
-
         self.micro_bsz = micro_bsz
         self.oom = False
-        self.packed_length = self.seq_len_sp * self.micro_bsz
 
-        self.max_seqlen = self.seq_len_sp  # maybe?
-        self.seq_nums = max(self.seq_len, self.max_seqlen) // self.max_seqlen
+        assert self.embed_dim  % self.tp_size == 0
+        assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        assert num_heads % self.tp_size == 0, "num_heads must be divisible by tp_size"
+        assert num_heads >= tp_size, f"head nums must bigger then tp_size: {tp_size}"
+
+        self.seq_len_sp = self.seq_len // self.sp_size
+        self.num_atten_head_tp = num_heads // self.tp_size
+        self.head_dim = self.embed_dim // num_heads
+
+        self.packed_length = self.seq_len_sp * self.micro_bsz
         self.device = f"cuda:{get_local_rank()}"
 
         indexs, cu_seqlens = [], [0]
-        left_tokens = self.packed_length
-        for seq in range(self.seq_nums):
-            ll = range(min(left_tokens, self.max_seqlen))
-            indexs.append(list(ll))
-            cu_seqlens.append(len(ll))
-            left_tokens -= self.max_seqlen
+        cu_seqlens = [0, self.packed_length]
+        indexs = list(range(self.packed_length))
 
-        mem_used = self.packed_length * 3 * self.embed_dim * self.dtype_size
+        weights_mem_used = self.packed_length * 3 * self.embed_dim * self.dtype_size
+        attn_activation = 11 * self.packed_length * self.embed_dim
+        mem_used = attn_activation + weights_mem_used
 
-        if (
-            mem_used > 60 * 1024**3
-            # or self.packed_length > 256 * K
-            or (self.seq_len >= 256 * K and self.embed_dim >= 6144)
-        ):
-            self.oom = True
-        else:
-            self.qkv = torch.rand(
-                size=(self.packed_length, 3 * self.num_attn_head_tp * self.head_dim),
-                dtype=self.dtype,
-                device=self.device,
-            )
-            self.dtype_size = self.qkv.element_size()
-            self.indexs = torch.tensor(data=indexs, dtype=torch.int32, device=self.device)
-            self.cu_seqlens = torch.tensor(data=cu_seqlens, dtype=torch.int32, device=self.device)
+        if mem_used > 75 * 1024**3:
+            assert False, f"warning : mem_used: {mem_used/1024**3:.2f} GB, seq_len: {self.seq_len}, embed_dim: {self.embed_dim}, tp_size: {self.tp_size}"
 
-            self.MHA = MHA(head_dim=self.head_dim, causal=True)
+        self.qkv = torch.rand(
+            size=(self.packed_length, 3 * self.num_atten_head_tp  * self.head_dim),
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+        self.dtype_size = self.qkv.element_size()
+        self.indexs = torch.tensor(data=indexs, dtype=torch.int32, device=self.device)
+        self.cu_seqlens = torch.tensor(data=cu_seqlens, dtype=torch.int32, device=self.device)
+        self.MHA = MHA(head_dim=self.head_dim, causal=True)
 
     def run(self):
-        if self.oom:
-            raise torch.cuda.OutOfMemoryError
-        else:
-            self.MHA(self.qkv, cu_seqlens=self.cu_seqlens, max_seqlen=self.max_seqlen)
+        self.MHA(self.qkv, cu_seqlens=self.cu_seqlens, max_seqlen=self.seq_len)
 
     @staticmethod
-    def gen_store_key(micro_bsz, seq_len, embed_dim):
-        return f"b_{micro_bsz}_s_{seq_len}_e_{embed_dim}"
+    def gen_store_key(micro_bsz, seq_len, embed_dim, num_heads, tp_size):
+        return f"b_{micro_bsz}_s_{seq_len}_h_{embed_dim}_a_{num_heads}_tp_{tp_size}"
 
     def complexity(self):
-        return UnitMultiHeadAttn.gen_store_key(self.micro_bsz, self.seq_len, self.embed_dim)
+        return UnitMultiHeadAttn.gen_store_key(self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size)
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

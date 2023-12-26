@@ -391,18 +391,26 @@ class Constraint:
                             # pp_num_layers += left
 
                             for wp_i, wp in enumerate(wp_search_ranges):
-                                if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
-                                    continue  # msp, fsp禁掉fsdp，我们目前还不支持
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                    assert wp == 1, "MSP FSP wp should be equal with 1"
-
-                                # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
-                                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                                    if wp > 1:
+                                        if self.debug:
+                                            print("NO solu: msp, fsp not support wp>1 !", flush=True)
+                                        continue  # msp, fsp禁掉fsdp，我们目前还不支持
+                                    # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
                                     zp_search_range = world_size // pp // sp // wp  # 这里的sp对于msp和fsp来说是tp
                                 else:
                                     zp_search_range = (
                                         world_size // pp // wp
                                     )  # internlm实现的zp和deepspeed不一样，zp是在切wp的基础上再切的
+
+                                try:
+                                    assert self._h % sp == 0, f"embed_dim:{self._h} must be divisible by sp: {sp}"
+                                    assert self._a % sp == 0, f"num_heads: {self._a} must be divisible by sp: {sp}"
+                                    assert self._a >= sp, f"num_heads: {self._a} must bigger then sp: {sp}"
+                                except AssertionError as e:
+                                    if self.debug:
+                                        print(f"NO solu: {e}", flush=True)
+                                    continue
 
                                 for zp_i, zp in enumerate(range(1, zp_search_range)):
                                     if self.debug:
