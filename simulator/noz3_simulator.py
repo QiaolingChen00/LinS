@@ -551,25 +551,29 @@ class Constraint:
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (
-                                        wp_comm_cost,
-                                        sp_comm_cost,
-                                        comp_wp,
-                                        comp_attn,
-                                    ) = TransformerOverlapOneLayer(
-                                        micro_bsz=micro_bsz,
-                                        sp_size=sp,
-                                        pp_size=pp,
-                                        world_size=world_size,
-                                        ckpt=activation_ckpt,
-                                        seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
-                                        vocab_size=self.vocab_size,
-                                        dtype_size=self.dtype_size,
-                                        hidden_dim=self._h,
-                                        num_head=self._a,
-                                        mlp_ratio=self.mlp_ratio,
-                                        multiple_of=self.multiple_of,
-                                    )._get_overlap(algo_type)
+                                    try:
+                                        (
+                                            wp_comm_cost,
+                                            sp_comm_cost,
+                                            comp_wp,
+                                            comp_attn,
+                                        ) = TransformerOverlapOneLayer(
+                                            micro_bsz=micro_bsz,
+                                            sp_size=sp,
+                                            pp_size=pp,
+                                            world_size=world_size,
+                                            ckpt=activation_ckpt,
+                                            seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
+                                            vocab_size=self.vocab_size,
+                                            dtype_size=self.dtype_size,
+                                            hidden_dim=self._h,
+                                            num_head=self._a,
+                                            mlp_ratio=self.mlp_ratio,
+                                            multiple_of=self.multiple_of,
+                                        )._get_overlap(algo_type)
+                                    except KeyError as e:
+                                        print(f"not found FA key: {e}", flush=True)
+                                        continue
 
                                     def overlaped_fwd_bwd_cost():
                                         return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn

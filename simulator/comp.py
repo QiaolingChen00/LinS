@@ -3,7 +3,7 @@ from utils.common import AlgoType, CostType
 
 
 def get_linear_cost(complexity):
-    return int(1000 * 10 * get_predict_or_kv_cost(CostType.LINEAR, complexity))  # 转换成ms小数点保留两位
+    return 1000 * 10 * get_predict_or_kv_cost(CostType.LINEAR, complexity)  # 转换成ms小数点保留两位
 
 
 def get_atten_cost_polynomial(complexity):
@@ -11,6 +11,18 @@ def get_atten_cost_polynomial(complexity):
 
 
 def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
+    """_summary_
+
+    Args:
+        micro_bsz (int): b
+        seq_len (int): seqlen，注意这里是完整的seqlen
+        head_dim (int): 原始的head_dim
+        num_heads (int): 原始的num_heads
+        sp_tp (int): sp for isp, tp for msp/fsp
+
+    Returns:
+        int: latency of fa, unit is second.
+    """
     predict = (
         1000
         * 10
@@ -18,7 +30,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
             CostType.FLASH_ATTN,
             complexity=0,
             micro_bsz=micro_bsz,
-            seq_len=seq_len,
+            seq_len=seq_len // sp_tp,
             embed_dim=head_dim,
             num_heads=num_heads,
             tp_size=sp_tp,
@@ -27,7 +39,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
 
     # import pdb; pdb.set_trace()
 
-    return int(predict)
+    return predict
 
 
 class TransformerComputation:
