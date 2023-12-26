@@ -70,37 +70,42 @@ def main():
         }
     )
 
+    GLOBA_BSZ = 256 * 1024 * 16
     config = Config(
         {
-            "world_size": 64,
-            "global_batch_size": 4 * 1024 * 1024,
-            "sequence_length": 4 * 1024,
-            "model_size": 20,
+            "world_size_max": 128,
+            "world_size_min": 128,
+            "global_bsz": GLOBA_BSZ,
+            "global_bsz_min": GLOBA_BSZ,
+            "global_bsz_max": GLOBA_BSZ,
+            "sequence_length": 256 * 1024,
+            "model_size": 65,
             "vocab_size": 103168,
             "dtype_size": 2,
             "use_fa": 1,
+            "fixed_micro_num": 1,
+            "fixed_micro_bsz": 1,
         }
     )
 
-    global_bsz_min = 1 * 1024 * 1024
-    global_bsz_max = 1 * 1024 * 1024
-
-    world_size_max = 64
-    world_size_min = 64
+    # global_bsz (int): Global batch size, use_strict_bsz 为True时会用到这个bsz
+    # global_bsz_min (int): global_bsz的搜素上界
+    # global_bsz_max (int): global_bsz的搜素下界
+    # max_world_size (int): world_size的搜素上界
+    # min_world_size (int): world_size的搜素下界
+    # seq_len (int):
+    # overlap_wdp (int): 是否考虑overlap wdp的通信
+    # fixed_micro_num (int): 是否固定micro_num,默认为None不生效
+    # fixed_micro_bsz (int): 是否固定micro_bsz ,默认为None不生效
+    # use_strict_bsz(bool) : 如果为True，则会严格限制globa bsz为global_bsz参数的值
+    # debug (bool): 是否输出额外的debug信息
+    # config (dict): 模型的config
 
     externl_sim = Constraint(
-        world_size=config.world_size,
-        global_bsz=config.global_batch_size,
-        global_bsz_min=global_bsz_min,
-        global_bsz_max=global_bsz_max,
-        seq_len=config.sequence_length,
-        max_world_size=world_size_max,
-        min_world_size=world_size_min,
         debug=True,
-        overlap_wdp=False,
-        use_fixed_micro_bsz=True,
-        fixed_micro_num=1,
-        fixed_micro_bsz=1,
+        overlap_wdp=True,
+        use_fixed_micro_bsz=False,
+        use_strict_bsz=True,
         config=config,
     )
     externl_sim.run_flexible_worldsize_loop()

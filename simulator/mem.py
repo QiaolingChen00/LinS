@@ -161,6 +161,10 @@ def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
     return prefetch_two_layers_weight * 2  # all_gather + reduce_scatter approximately
 
 
+def get_p2p_buffer_size(dtype_size, seq_len, sp_size, micro_bsz, hidden_dim):
+    return dtype_size * (seq_len // sp_size) * micro_bsz * hidden_dim
+
+
 def get_memory_threshold(
     algo: AlgoType,
     **kwargs,
