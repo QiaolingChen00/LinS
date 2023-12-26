@@ -10,7 +10,7 @@ from simulator.mem import (
     get_head_output_mm,
     get_memory_pool_mm,
     get_memory_threshold,
-    get_norm_output_mm
+    get_norm_output_mm,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -190,7 +190,7 @@ class Constraint:
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  # 
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  #
 
         self.min_comm_cost, self.msp_min_cost, self.fsp_min_cost, self.isp_min_cost = (
             float("inf"),
@@ -413,12 +413,12 @@ class Constraint:
 
                                     # 反碎片化惩罚
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                        if sp * zp * wp * pp < 4:
+                                        if sp * zp * wp * pp < (self.model_size / 1.5):
                                             if self.debug:
                                                 print(f"NO solu: skip sp*zp*wp*pp< 4 solu!", flush=True)
                                             continue
                                     else:
-                                        if zp * wp * pp < 4:
+                                        if zp * wp * pp < (self.model_size / 1.5):
                                             if self.debug:
                                                 print(f"NO solu: skip zp*wp*pp< 4 solu!", flush=True)
                                             continue
@@ -517,7 +517,12 @@ class Constraint:
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                    (
+                                        wp_comm_cost,
+                                        sp_comm_cost,
+                                        comp_wp,
+                                        comp_attn,
+                                    ) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
                                         sp_size=sp,
                                         pp_size=pp,
