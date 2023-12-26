@@ -428,7 +428,7 @@ class Constraint:
                                     assert self._a >= sp, f"num_heads: {self._a} must bigger then sp: {sp}"
                                 except AssertionError as e:
                                     if self.debug:
-                                        print(f"NO solu: {e}", flush=True)
+                                        print(f"NO solu: head assert {e}", flush=True)
                                     continue
 
                                 for zp_i, zp in enumerate(range(1, zp_search_range)):
