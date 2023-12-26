@@ -434,12 +434,12 @@ class Constraint:
 
                                     # 反碎片化惩罚
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                        if sp * zp * wp * pp < 4:
+                                        if sp * zp * wp * pp < (self.model_size / 1.5):
                                             if self.debug:
                                                 print(f"NO solu: skip sp*zp*wp*pp< 4 solu!\n", flush=True)
                                             continue
                                     else:
-                                        if zp * wp * pp < 4:
+                                        if zp * wp * pp < (self.model_size / 1.5):
                                             if self.debug:
                                                 print(f"NO solu: skip zp*wp*pp< 4 solu!\n", flush=True)
                                             continue
@@ -545,7 +545,12 @@ class Constraint:
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                    (
+                                        wp_comm_cost,
+                                        sp_comm_cost,
+                                        comp_wp,
+                                        comp_attn,
+                                    ) = TransformerOverlapOneLayer(
                                         micro_bsz=micro_bsz,
                                         sp_size=sp,
                                         pp_size=pp,
