@@ -17,7 +17,7 @@ from simulator.overlap import TransformerOverlapOneLayer
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _79GB, _100GB, GB, AlgoType, get_model_config
+from utils.common import _75GB, _100GB, GB, AlgoType, get_model_config
 from utils.config import Config
 
 
@@ -410,20 +410,26 @@ class Constraint:
                             # pp_num_layers += left
 
                             for wp_i, wp in enumerate(wp_search_ranges):
-                                if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
-                                    if self.debug:
-                                        print("NO solu: msp, fsp not support wp>1 !", flush=True)
-                                    continue  # msp, fsp禁掉fsdp，我们目前还不支持
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                    assert wp == 1, "MSP FSP wp should be equal with 1"
-
-                                # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
-                                if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+                                    if wp > 1:
+                                        if self.debug:
+                                            print("NO solu: msp, fsp not support wp>1 !", flush=True)
+                                        continue  # msp, fsp禁掉fsdp，我们目前还不支持
+                                    # zp的搜索空间是被wp限制的，同时他不是按照8的倍数变化的，是,1,2,3, ...这样递增的
                                     zp_search_range = world_size // pp // sp // wp  # 这里的sp对于msp和fsp来说是tp
                                 else:
                                     zp_search_range = (
                                         world_size // pp // wp
                                     )  # internlm实现的zp和deepspeed不一样，zp是在切wp的基础上再切的
+
+                                try:
+                                    assert self._h % sp == 0, f"embed_dim:{self._h} must be divisible by sp: {sp}"
+                                    assert self._a % sp == 0, f"num_heads: {self._a} must be divisible by sp: {sp}"
+                                    assert self._a >= sp, f"num_heads: {self._a} must bigger then sp: {sp}"
+                                except AssertionError as e:
+                                    if self.debug:
+                                        print(f"NO solu: head assert {e}", flush=True)
+                                    continue
 
                                 for zp_i, zp in enumerate(range(1, zp_search_range)):
                                     if self.debug:
@@ -533,37 +539,41 @@ class Constraint:
                                     mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
                                     mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
                                     mem_cost = max(mem_cost1, mem_cost2)
-                                    if mem_cost > _79GB:
+                                    if mem_cost > _75GB:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         if self.debug:
                                             print(
-                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _79GB: {_79GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
+                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _75GB: {_75GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
                                                 flush=True,
                                             )
                                         continue
                                     else:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
-                                    (
-                                        wp_comm_cost,
-                                        sp_comm_cost,
-                                        comp_wp,
-                                        comp_attn,
-                                    ) = TransformerOverlapOneLayer(
-                                        micro_bsz=micro_bsz,
-                                        sp_size=sp,
-                                        pp_size=pp,
-                                        world_size=world_size,
-                                        ckpt=activation_ckpt,
-                                        seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
-                                        vocab_size=self.vocab_size,
-                                        dtype_size=self.dtype_size,
-                                        hidden_dim=self._h,
-                                        num_head=self._a,
-                                        mlp_ratio=self.mlp_ratio,
-                                        multiple_of=self.multiple_of,
-                                    )._get_overlap(algo_type)
+                                    try:
+                                        (
+                                            wp_comm_cost,
+                                            sp_comm_cost,
+                                            comp_wp,
+                                            comp_attn,
+                                        ) = TransformerOverlapOneLayer(
+                                            micro_bsz=micro_bsz,
+                                            sp_size=sp,
+                                            pp_size=pp,
+                                            world_size=world_size,
+                                            ckpt=activation_ckpt,
+                                            seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
+                                            vocab_size=self.vocab_size,
+                                            dtype_size=self.dtype_size,
+                                            hidden_dim=self._h,
+                                            num_head=self._a,
+                                            mlp_ratio=self.mlp_ratio,
+                                            multiple_of=self.multiple_of,
+                                        )._get_overlap(algo_type)
+                                    except KeyError as e:
+                                        print(f"not found FA key: {e}", flush=True)
+                                        continue
 
                                     def overlaped_fwd_bwd_cost():
                                         return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn

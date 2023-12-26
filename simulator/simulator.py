@@ -15,7 +15,7 @@ from simulator.overlap import TransformerOverlap
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _79GB, GB, AlgoType, CostType, get_model_config
+from utils.common import _75GB, GB, AlgoType, CostType, get_model_config
 
 
 class LinsSolution:
