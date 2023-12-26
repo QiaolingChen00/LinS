@@ -10,7 +10,7 @@ from simulator.mem import (
     get_head_output_mm,
     get_memory_pool_mm,
     get_memory_threshold,
-    get_norm_output_mm
+    get_norm_output_mm,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -51,6 +51,7 @@ class LinsSolutionNoZ3:
         block_activation,
         wdp_comm_cost,
         all_fwd_bwd_cost,
+        g_bsz,
     ):
         self.pp = pp
         self.sp = sp
@@ -83,6 +84,7 @@ class LinsSolutionNoZ3:
 
         self.wdp_comm_cost = wdp_comm_cost
         self.all_fwd_bwd_cost = all_fwd_bwd_cost
+        self.g_bsz = g_bsz
 
     def __str__(self):
         return self.__repr__()
@@ -93,6 +95,7 @@ class LinsSolutionNoZ3:
             f" tgs: {self.tgs *  (-(10**4))}"
             f" pp: {self.pp}"
             f" sp: {self.sp}"
+            f" global bsz: {self.g_bsz} \n"
             f" activation ckpt: {self.activation_ckpt}"
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
@@ -102,7 +105,7 @@ class LinsSolutionNoZ3:
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
-            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB"
+            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB \n"
         )
 
 
@@ -138,25 +141,17 @@ class PPIter:
 class Constraint:
     def __init__(
         self,
-        world_size: int,
-        global_bsz: int,
-        global_bsz_min: int,
-        global_bsz_max: int,
-        max_world_size: int,
-        min_world_size: int,
-        seq_len: int,
         overlap_wdp: int,
         debug: bool,
         config: dict,
         use_fixed_micro_bsz: bool,
-        fixed_micro_num: int = None,
-        fixed_micro_bsz: int = None,
+        use_strict_bsz: bool,
     ) -> None:
         """求解器
 
         Args:
             world_size (int): GPU数量(现在这个参数没用)
-            global_bsz (int): Global batch size(现在这个参数没用)
+            global_bsz (int): use_strict_bsz为True时会用到这个bsz
             global_bsz_min (int): global_bsz的搜素上界
             global_bsz_max (int): global_bsz的搜素下界
             max_world_size (int): world_size的搜素上界
@@ -166,22 +161,22 @@ class Constraint:
             fixed_micro_num (int): 是否固定micro_num,默认为None不生效
             fixed_micro_bsz (int): 是否固定micro_bsz ,默认为None不生效
             debug (bool): 是否输出额外的debug信息
+            use_strict_bsz(bool) : 如果为True, 则会严格限制globa bsz为global_bsz参数的值
             config (dict): 模型的config
         """
 
-        self.world_size = world_size
-        self.global_bsz = global_bsz  # 4
-        self.global_bsz_min = global_bsz_min  # 4
-        self.global_bsz_max = global_bsz_max  # 5
-        self.max_world_size = max_world_size
-        self.min_world_size = min_world_size
-        self.fixed_micro_num = fixed_micro_num
-        self.fixed_micro_bsz = fixed_micro_bsz
+        self.global_bsz = config.global_bsz  # 4
+        self.global_bsz_min = config.global_bsz_min  # 4
+        self.global_bsz_max = config.global_bsz_max  # 5
+        self.max_world_size = config.world_size_max
+        self.min_world_size = config.world_size_min
+        self.fixed_micro_num = config.fixed_micro_num
+        self.fixed_micro_bsz = config.fixed_micro_bsz
         self.use_fixed_micro_bsz = use_fixed_micro_bsz
         self.debug = debug
         self.overlap_wdp = overlap_wdp
 
-        self.seq_len = seq_len
+        self.seq_len = config.sequence_length
         self.dtype_size = config.dtype_size
         self.model_size = config.model_size
         self.vocab_size = config.vocab_size
@@ -190,7 +185,12 @@ class Constraint:
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  # 
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  #
+        self._use_strict_bsz = use_strict_bsz
+        if self._use_strict_bsz:
+            assert (
+                not self.use_fixed_micro_bsz
+            ), "If use 'use_fixed_micro_bsz', the solution satisfies 'use_strict_bsz' cannot be found."
 
         self.min_comm_cost, self.msp_min_cost, self.fsp_min_cost, self.isp_min_cost = (
             float("inf"),
@@ -214,9 +214,18 @@ class Constraint:
         if pp_size * sp_size > world_size:
             return None
 
-        num_tokens = self.global_bsz
         dp_world_size = world_size // pp_size // sp_size
-        bsz = num_tokens // dp_world_size // seq_len
+        if world_size % pp_size != 0 or world_size % sp_size != 0 or world_size % (pp_size * sp_size) != 0:
+            return None
+
+        if self.global_bsz % dp_world_size != 0:
+            return None
+        if self.global_bsz % seq_len != 0:
+            return None
+        if self.global_bsz % (dp_world_size * seq_len) != 0:
+            return None
+
+        bsz = self.global_bsz // dp_world_size // seq_len
 
         micro_bsz_num = []
         for micro_bsz in range(1, int(bsz**0.5) + 1):
@@ -241,6 +250,9 @@ class Constraint:
             return None
 
         dp_world_size = world_size // pp_size // sp_size
+        if world_size % pp_size != 0 or world_size % sp_size != 0 or world_size % (pp_size * sp_size) != 0:
+            return None
+
         bsz_max = self.global_bsz_max // dp_world_size // seq_len
         bsz_min = self.global_bsz_min // dp_world_size // seq_len
 
@@ -321,11 +333,11 @@ class Constraint:
             check_and_modify_parallel_config(parallel_conf)
         except AssertionError as e:
             if self.debug:
-                print(f"NO solu: build gpc assertion error: {e}", flush=True)
+                print(f"NO solu: build gpc failed: {e}\n", flush=True)
             return None
         except ZeroDivisionError as e:
             if self.debug:
-                print(f"NO solu: build gpc ZeroDivisionError error: {e}", flush=True)
+                print(f"NO solu: build gpc failed: {e}\n", flush=True)
             return None
         else:
             return parallel_conf
@@ -340,6 +352,7 @@ class Constraint:
             self.run_loop(world_size)
 
         if self.min_cost_solution is not None:
+            print("--------------------- END -----------------------", flush=True)
             print("Max TGS:", self.min_comm_cost * (-(10**4)))
             print("Solution:", self.min_cost_solution, flush=True)
             if self.msp_min_solu is not None:
@@ -352,10 +365,6 @@ class Constraint:
             print("No solution found")
 
     def run_loop(self, world_size):
-        # pp_search_range = list(reversed(list(PPIter(self.world_size, self._l))))
-        # sp_search_range = list(reversed(list(SPIter(self.world_size, self._a))))
-        # wp_zp_search_ranges = list(reversed(list(SPIter(self.world_size, self.world_size))))
-
         pp_search_range = PPIter(world_size, self._l)
         sp_search_range = SPIter(world_size, self._a)
         wp_search_ranges = SPIter(world_size, world_size)
@@ -371,10 +380,17 @@ class Constraint:
         for pp_i, pp in enumerate(pp_search_range):
             for sp_i, sp in enumerate(sp_search_range):
                 if not self.use_fixed_micro_bsz:
-                    bs_bns = self.get_bsz_approximate(world_size, pp, sp, self.seq_len)
-                    if bs_bns is None:
+                    if self._use_strict_bsz:
+                        bs_bns = self.get_bsz_strict(world_size, pp, sp, self.seq_len)
+                    else:
+                        bs_bns = self.get_bsz_approximate(world_size, pp, sp, self.seq_len)
+                    if bs_bns is None or len(bs_bns) == 0:
                         if self.debug:
-                            print("NO solu: bs_bns is None!", flush=True)
+                            print(
+                                f"NO solu: pp:{pp} , sp:{sp} can't find micro_bsz/micro_num for"
+                                f"world_size:{world_size}, seq_len:{self.seq_len}, global bsz range: [{self.global_bsz_min}-{self.global_bsz_max}]!",
+                                flush=True,
+                            )
                         continue
                 else:
                     bs_bns = [(self.fixed_micro_bsz, self.fixed_micro_num)]
@@ -386,12 +402,14 @@ class Constraint:
                             pp_num_layers, left = divmod(self._l, pp)
                             if left != 0:
                                 if self.debug:
-                                    print("NO solu: layer nums % pp != 0!", flush=True)
+                                    print(f"NO solu: layer nums:{self._l} % pp:{pp} != 0!", flush=True)
                                 continue
                             # pp_num_layers += left
 
                             for wp_i, wp in enumerate(wp_search_ranges):
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP] and wp > 1:
+                                    if self.debug:
+                                        print("NO solu: msp, fsp not support wp>1 !", flush=True)
                                     continue  # msp, fsp禁掉fsdp，我们目前还不支持
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                     assert wp == 1, "MSP FSP wp should be equal with 1"
@@ -415,12 +433,12 @@ class Constraint:
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         if sp * zp * wp * pp < 4:
                                             if self.debug:
-                                                print(f"NO solu: skip sp*zp*wp*pp< 4 solu!", flush=True)
+                                                print(f"NO solu: skip sp*zp*wp*pp< 4 solu!\n", flush=True)
                                             continue
                                     else:
                                         if zp * wp * pp < 4:
                                             if self.debug:
-                                                print(f"NO solu: skip zp*wp*pp< 4 solu!", flush=True)
+                                                print(f"NO solu: skip zp*wp*pp< 4 solu!\n", flush=True)
                                             continue
 
                                     # build device mesh
@@ -510,7 +528,7 @@ class Constraint:
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         if self.debug:
                                             print(
-                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _79GB: {_79GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB",
+                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _79GB: {_79GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
                                                 flush=True,
                                             )
                                         continue
@@ -591,6 +609,7 @@ class Constraint:
                                         block_activation=block_activation,
                                         wdp_comm_cost=wdp_comm_cost,
                                         all_fwd_bwd_cost=all_fwd_bwd_cost,
+                                        g_bsz=now_global_bsz,
                                     )
 
                                     cost = tgs
