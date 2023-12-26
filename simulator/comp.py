@@ -30,7 +30,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
             CostType.FLASH_ATTN,
             complexity=0,
             micro_bsz=micro_bsz,
-            seq_len=seq_len // sp_tp,
+            seq_len=seq_len,
             embed_dim=head_dim,
             num_heads=num_heads,
             tp_size=sp_tp,

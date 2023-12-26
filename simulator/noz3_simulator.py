@@ -17,7 +17,7 @@ from simulator.overlap import TransformerOverlapOneLayer
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _79GB, _100GB, GB, AlgoType, get_model_config
+from utils.common import _75GB, _100GB, GB, AlgoType, get_model_config
 from utils.config import Config
 
 
@@ -539,12 +539,12 @@ class Constraint:
                                     mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
                                     mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
                                     mem_cost = max(mem_cost1, mem_cost2)
-                                    if mem_cost > _79GB:
+                                    if mem_cost > _75GB:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         if self.debug:
                                             print(
-                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _79GB: {_79GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
+                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _75GB: {_75GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
                                                 flush=True,
                                             )
                                         continue

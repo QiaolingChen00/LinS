@@ -59,7 +59,7 @@ def run_profile(args, test_type):
         except RuntimeError:
             #  self.packed_length * 3 * self.embed_dim * self.dtype_size
             print(
-                f"packed_length: {test_case.packed_length}, embed_dim: {test_case.embed_dim}, micro_bsz: {test_case.micro_bsz}, seq_len: {test_case.seq_len}",
+                f"packed_length: {test_case.packed_length}, embed_dim: {test_case.embed_dim}, micro_bsz: {test_case.micro_bsz}, seq_len: {test_case.seq_len}, tp:{test_case.tp_size}",
                 flush=True,
             )
             torch.cuda.empty_cache()

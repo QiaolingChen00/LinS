@@ -38,8 +38,8 @@ class MHA(nn.Module):
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitMultiHeadAttn(UnitBench):
     test_loop = {
-        "seq_len": [int(0.25 * K), int(0.5 * K), 1 * K, 2 * K, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K, 128 * K],
-        "num_heads_and_hidden_dim": [(32, 4096), (40, 5120), (48, 6144), (64, 8192), (80, 10240)],
+        "seq_len": [256 * K, int(0.25 * K), int(0.5 * K), 1 * K, 2 * K, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K, 128 * K],
+        "num_heads_and_hidden_dim": [(80, 10240),(64, 8192), (48, 6144), (40, 5120), (32, 4096)],#  
         # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
         "dtype": [torch.bfloat16],
         "micro_bsz": [1, 2, 4, 8],
@@ -48,7 +48,6 @@ class UnitMultiHeadAttn(UnitBench):
 
     def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size) -> None:
         num_heads, embed_dim = num_heads_and_hidden_dim
-        self.sp_size = 1
         self.tp_size = tp_size
         self.seq_len = seq_len
         self.num_heads = num_heads
@@ -63,11 +62,10 @@ class UnitMultiHeadAttn(UnitBench):
         assert num_heads % self.tp_size == 0, "num_heads must be divisible by tp_size"
         assert num_heads >= tp_size, f"head nums must bigger then tp_size: {tp_size}"
 
-        self.seq_len_sp = self.seq_len // self.sp_size
         self.num_atten_head_tp = num_heads // self.tp_size
         self.head_dim = self.embed_dim // num_heads
 
-        self.packed_length = self.seq_len_sp * self.micro_bsz
+        self.packed_length = self.seq_len * self.micro_bsz
         self.device = f"cuda:{get_local_rank()}"
 
         indexs, cu_seqlens = [], [0]
@@ -78,7 +76,16 @@ class UnitMultiHeadAttn(UnitBench):
         attn_activation = 11 * self.packed_length * self.embed_dim
         mem_used = attn_activation + weights_mem_used
 
+
+        oom = False
         if mem_used > 75 * 1024**3:
+            oom = True
+        if self.seq_len == 256 * K and self.embed_dim / self.tp_size >= 6144:
+            oom = True
+        if self.seq_len == 256 * K and micro_bsz > 1:
+            oom = True
+
+        if oom:    
             assert False, f"warning : mem_used: {mem_used/1024**3:.2f} GB, seq_len: {self.seq_len}, embed_dim: {self.embed_dim}, tp_size: {self.tp_size}"
 
         self.qkv = torch.rand(
