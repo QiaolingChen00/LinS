@@ -53,9 +53,9 @@ class TransformerCommunication:
 
         comm(sp) = comm(forward, sp) + comm(backward, sp)
 
-        comm(forward, sp) = 4 * comm(all2all, s/sp, b, h/sp) * (ckpt + 1)
+        comm(forward, sp) = 4 * comm(all2all, s/sp, b, h) * (ckpt + 1)
 
-        comm(backward, sp) = 4 * comm(all2all, s/sp, b, h/sp)
+        comm(backward, sp) = 4 * comm(all2all, s/sp, b, h)
 
         wp communication: (In our implementation, the wp communication of ckpt==1 is the same as ckpt==0)
 
@@ -107,9 +107,9 @@ class TransformerCommunication:
 
         comm(sp) = comm(forward, sp) + comm(backward, sp)
 
-        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
+        comm(forward, sp) = (2 * comm(all_gather, s, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
 
-        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s/sp, b, h)
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 2 * comm(all_gather, s, b, h)
 
         wp communication:
 
@@ -185,9 +185,9 @@ class TransformerCommunication:
 
         comm(sp) = comm(forward, sp) + comm(backward, sp)
 
-        comm(forward, sp) = (2 * comm(all_gather, s/sp, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
+        comm(forward, sp) = (2 * comm(all_gather, s, b, h) + 2 * comm(reduceScatter, s, b, h)) * (ckpt + 1)
 
-        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s/sp, b, h)
+        comm(backward, sp) = 2 * comm(reduceScatter, s, b, h) + 4 * comm(all_gather, s, b, h)
 
         wp communication:
 
@@ -265,4 +265,4 @@ class TransformerCommunication:
             return self.communication_msp()
         elif algo_type == AlgoType.FSP:
             return self.communication_fsp()
-        raise ValueError(f"Unkoen algo_type: {algo_type}")
+        raise ValueError(f"Unkown algo_type: {algo_type}")
