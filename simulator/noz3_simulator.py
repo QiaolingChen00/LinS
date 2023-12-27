@@ -13,6 +13,7 @@ from simulator.mem import (
     get_memory_threshold,
     get_norm_output_mm,
     get_p2p_buffer_size,
+    get_rotary_emb_sincos_cache_mm,
 )
 from simulator.overlap import TransformerOverlapOneLayer
 
@@ -56,6 +57,7 @@ class LinsSolutionNoZ3:
         all_fwd_bwd_cost,
         g_bsz,
         pp_p2p_buffer,
+        rotary_emb_sincos_cache_mm,
     ):
         self.pp = pp
         self.sp = sp
@@ -91,6 +93,7 @@ class LinsSolutionNoZ3:
         self.all_fwd_bwd_cost = all_fwd_bwd_cost
         self.g_bsz = g_bsz
         self.pp_p2p_buffer = pp_p2p_buffer
+        self.rotary_emb_sincos_cache_mm = rotary_emb_sincos_cache_mm
 
     def __str__(self):
         return self.__repr__()
@@ -110,8 +113,8 @@ class LinsSolutionNoZ3:
             f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms \n"
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
-            f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} \n"
+            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB \n"
+            f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
         )
 
 
@@ -524,6 +527,14 @@ class Constraint:
                                     head_output_activation = get_head_output_mm(
                                         self.seq_len, self.vocab_size, dtype_size=self.dtype_size
                                     )
+                                    rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
+                                        seq_len=self.seq_len,
+                                        pp_size=pp,
+                                        hidden_dim=self._h,
+                                        head_nums=self._a,
+                                        layer_nums=self._l,
+                                        dtype_size=self.dtype_size,
+                                    )
                                     # 对于pp0,占用的激活仍然是 layer_num 份
                                     block_activation = (
                                         pp_num_layers
@@ -541,6 +552,7 @@ class Constraint:
                                         + block_activation
                                         + isp_mem_pool
                                         + pp_p2p_buffer
+                                        + rotary_emb_sincos_cache_mm
                                     )
 
                                     # 总显存开销
@@ -639,6 +651,7 @@ class Constraint:
                                         all_fwd_bwd_cost=all_fwd_bwd_cost,
                                         g_bsz=now_global_bsz,
                                         pp_p2p_buffer=pp_p2p_buffer,
+                                        rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
                                     )
 
                                     cost = tgs

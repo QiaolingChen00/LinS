@@ -154,6 +154,12 @@ def get_head_input_mm(seq_len, hidden_dim, dtype_size):
     return dtype_size * seq_len * hidden_dim
 
 
+# rotary embedding sin/cos cache
+def get_rotary_emb_sincos_cache_mm(seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
+    # [sin,cos] * dtype_size * pp切后的layer_nums * 不切的seq_len * head_dim // 2
+    return 2 * dtype_size * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
+
+
 def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
     mlp_hidden_size = int(hidden_size * mlp_ratio)
     mlp_hidden_size = 256 * ((mlp_hidden_size + 256 - 1) // 256)
