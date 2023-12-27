@@ -6,9 +6,9 @@ import warnings
 
 import torch
 from einops import rearrange
+from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
 from torch import nn
 
-from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
 from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import K, get_local_rank
 
@@ -39,7 +39,7 @@ class MHA(nn.Module):
 class UnitMultiHeadAttn(UnitBench):
     test_loop = {
         "seq_len": [256 * K, int(0.25 * K), int(0.5 * K), 1 * K, 2 * K, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K, 128 * K],
-        "num_heads_and_hidden_dim": [(80, 10240),(64, 8192), (48, 6144), (40, 5120), (32, 4096)],#  
+        "num_heads_and_hidden_dim": [(80, 10240), (64, 8192), (48, 6144), (40, 5120), (32, 4096)],  #
         # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
         "dtype": [torch.bfloat16],
         "micro_bsz": [1, 2, 4, 8],
@@ -57,7 +57,7 @@ class UnitMultiHeadAttn(UnitBench):
         self.micro_bsz = micro_bsz
         self.oom = False
 
-        assert self.embed_dim  % self.tp_size == 0
+        assert self.embed_dim % self.tp_size == 0
         assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         assert num_heads % self.tp_size == 0, "num_heads must be divisible by tp_size"
         assert num_heads >= tp_size, f"head nums must bigger then tp_size: {tp_size}"
@@ -76,7 +76,6 @@ class UnitMultiHeadAttn(UnitBench):
         attn_activation = 11 * self.packed_length * self.embed_dim
         mem_used = attn_activation + weights_mem_used
 
-
         oom = False
         if mem_used > 75 * 1024**3:
             oom = True
@@ -85,11 +84,13 @@ class UnitMultiHeadAttn(UnitBench):
         if self.seq_len == 256 * K and micro_bsz > 1:
             oom = True
 
-        if oom:    
-            assert False, f"warning : mem_used: {mem_used/1024**3:.2f} GB, seq_len: {self.seq_len}, embed_dim: {self.embed_dim}, tp_size: {self.tp_size}"
+        if oom:
+            assert (
+                False
+            ), f"warning : mem_used: {mem_used/1024**3:.2f} GB, seq_len: {self.seq_len}, embed_dim: {self.embed_dim}, tp_size: {self.tp_size}"
 
         self.qkv = torch.rand(
-            size=(self.packed_length, 3 * self.num_atten_head_tp  * self.head_dim),
+            size=(self.packed_length, 3 * self.num_atten_head_tp * self.head_dim),
             dtype=self.dtype,
             device=self.device,
         )
@@ -107,5 +108,7 @@ class UnitMultiHeadAttn(UnitBench):
         return f"b_{micro_bsz}_s_{seq_len}_h_{embed_dim}_a_{num_heads}_tp_{tp_size}"
 
     def complexity(self):
-        return UnitMultiHeadAttn.gen_store_key(self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size)
+        return UnitMultiHeadAttn.gen_store_key(
+            self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size
+        )
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

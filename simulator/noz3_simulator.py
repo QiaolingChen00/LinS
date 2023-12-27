@@ -7,6 +7,7 @@ from simulator.context import global_context as gpc
 from simulator.mem import (
     get_block_output_mm,
     get_embedding_output_mm,
+    get_head_input_mm,
     get_head_output_mm,
     get_memory_pool_mm,
     get_memory_threshold,
@@ -17,7 +18,7 @@ from simulator.overlap import TransformerOverlapOneLayer
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _75GB, _100GB, GB, AlgoType, get_model_config
+from utils.common import _100GB, GB, AlgoType, get_model_config
 from utils.config import Config
 
 
@@ -48,7 +49,8 @@ class LinsSolutionNoZ3:
         mem_pool_mm,
         embedding_activation,
         norm_activation,
-        head_activation,
+        head_input_activation,
+        head_output_activation,
         block_activation,
         wdp_comm_cost,
         all_fwd_bwd_cost,
@@ -81,7 +83,8 @@ class LinsSolutionNoZ3:
         self.mem_pool_mm = mem_pool_mm
         self.embedding_activation = embedding_activation
         self.norm_activation = norm_activation
-        self.head_activation = head_activation
+        self.head_input_activation = head_input_activation
+        self.head_output_activation = head_output_activation
         self.block_activation = block_activation
 
         self.wdp_comm_cost = wdp_comm_cost
@@ -108,7 +111,7 @@ class LinsSolutionNoZ3:
             f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, \n"
-            f" head_activation: {self.head_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} \n"
+            f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} \n"
         )
 
 
@@ -184,6 +187,7 @@ class Constraint:
         self.model_size = config.model_size
         self.vocab_size = config.vocab_size
         self.use_fa = config.use_fa
+        self.mem_threshold = config.mem_threshold
         self.fp32_ratio = max(1, 4 // self.dtype_size)
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
@@ -514,7 +518,10 @@ class Constraint:
                                     norm_activation = get_norm_output_mm(
                                         micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
                                     )
-                                    head_activation = get_head_output_mm(
+                                    head_input_activation = get_head_input_mm(
+                                        self.seq_len, self._h, dtype_size=self.dtype_size
+                                    )
+                                    head_output_activation = get_head_output_mm(
                                         self.seq_len, self.vocab_size, dtype_size=self.dtype_size
                                     )
                                     # 对于pp0,占用的激活仍然是 layer_num 份
@@ -529,7 +536,8 @@ class Constraint:
                                         activation
                                         + embedding_activation
                                         + norm_activation
-                                        + head_activation
+                                        + head_input_activation
+                                        + head_output_activation
                                         + block_activation
                                         + isp_mem_pool
                                         + pp_p2p_buffer
@@ -539,12 +547,12 @@ class Constraint:
                                     mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
                                     mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
                                     mem_cost = max(mem_cost1, mem_cost2)
-                                    if mem_cost > _75GB:
+                                    if mem_cost > self.mem_threshold:
                                         A[pp_i][sp_i][wp_i][zp_i] = _100GB
                                         C[pp_i][sp_i][wp_i][zp_i] = 0
                                         if self.debug:
                                             print(
-                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > _75GB: {_75GB} ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
+                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > mem_threshold: {self.mem_threshold/1024**3:.2f} GB ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
                                                 flush=True,
                                             )
                                         continue
@@ -552,12 +560,7 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (
-                                            wp_comm_cost,
-                                            sp_comm_cost,
-                                            comp_wp,
-                                            comp_attn,
-                                        ) = TransformerOverlapOneLayer(
+                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
@@ -629,7 +632,8 @@ class Constraint:
                                         mem_pool_mm=isp_mem_pool,
                                         embedding_activation=embedding_activation,
                                         norm_activation=norm_activation,
-                                        head_activation=head_activation,
+                                        head_input_activation=head_input_activation,
+                                        head_output_activation=head_output_activation,
                                         block_activation=block_activation,
                                         wdp_comm_cost=wdp_comm_cost,
                                         all_fwd_bwd_cost=all_fwd_bwd_cost,
