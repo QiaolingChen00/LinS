@@ -139,13 +139,19 @@ def get_norm_output_mm(micro_bsz, seq_len, hidden_dim, sp, dtype_size):
     # [hidden_dim, packed_length]
     sp_worldsize = gpc.get_world_size(ParallelMode.TENSOR)
     assert sp == sp_worldsize, f"sp={sp}, sp_world_size:{sp_worldsize}"
-    return 4 * micro_bsz * seq_len * hidden_dim // sp
+    return 4 * micro_bsz * seq_len * hidden_dim // sp  # norm的输出是fp32的
 
 
 # head output
 def get_head_output_mm(seq_len, vocab_size, dtype_size):
-    # [hidden_dim, vocab_size]
+    # [seq_len, vocab_size]
     return dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
+
+
+# head output
+def get_head_input_mm(seq_len, hidden_dim, dtype_size):
+    # [seq_len, vocab_size]
+    return dtype_size * seq_len * hidden_dim
 
 
 def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
