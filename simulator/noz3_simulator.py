@@ -30,6 +30,7 @@ class LinsSolutionNoZ3:
         sp,
         wp,
         zp,
+        seq_len,
         micro_bsz,
         micro_num,
         algo_type,
@@ -61,6 +62,7 @@ class LinsSolutionNoZ3:
     ):
         self.pp = pp
         self.sp = sp
+        self.seq_len = seq_len
         self.micro_bsz = micro_bsz
         self.micro_num = micro_num
         self.algo_type = algo_type
@@ -106,6 +108,7 @@ class LinsSolutionNoZ3:
             f" sp: {self.sp}"
             f" global bsz: {self.g_bsz} \n"
             f" activation ckpt: {self.activation_ckpt}"
+            f" seq_len: {self.seq_len}"
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}"
             f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
@@ -371,6 +374,19 @@ class Constraint:
                 print(f"self.fsp_min_solu : {self.fsp_min_solu}")
             if self.isp_min_solu is not None:
                 print(f"self.isp_min_solu : {self.isp_min_solu}")
+
+            final_res = {
+                "algo_type": self.min_cost_solution.algo_type,
+                "seq_len": self.min_cost_solution.seq_len,
+                "micro_num": self.min_cost_solution.micro_num,
+                "micro_bsz": self.min_cost_solution.micro_bsz,
+                "pp_size": self.min_cost_solution.pp,
+                "tp_size": self.min_cost_solution.sp,
+                "wp_size": self.min_cost_solution.wp_size,
+                "zp_size": self.min_cost_solution.zp_size,
+                "activation_ckpt": True if self.min_cost_solution.activation_ckpt else False,
+            }
+            print(final_res)
         else:
             print("No solution found")
 
@@ -572,7 +588,12 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                        (
+                                            wp_comm_cost,
+                                            sp_comm_cost,
+                                            comp_wp,
+                                            comp_attn,
+                                        ) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
@@ -624,6 +645,7 @@ class Constraint:
                                         sp=sp,
                                         wp=wp,
                                         zp=zp,
+                                        seq_len=self.seq_len,
                                         micro_bsz=micro_bsz,
                                         micro_num=micro_num,
                                         algo_type=algo_type,

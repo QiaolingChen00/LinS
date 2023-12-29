@@ -85,7 +85,7 @@ def main():
             "use_fa": 1,
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
-            "mem_threshold": 75 * 1024**3,
+            "mem_threshold": 74 * 1024**3,
         }
     )
 
