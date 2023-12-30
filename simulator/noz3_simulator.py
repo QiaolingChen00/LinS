@@ -59,6 +59,7 @@ class LinsSolutionNoZ3:
         g_bsz,
         pp_p2p_buffer,
         rotary_emb_sincos_cache_mm,
+        total_latency,
     ):
         self.pp = pp
         self.sp = sp
@@ -96,6 +97,7 @@ class LinsSolutionNoZ3:
         self.g_bsz = g_bsz
         self.pp_p2p_buffer = pp_p2p_buffer
         self.rotary_emb_sincos_cache_mm = rotary_emb_sincos_cache_mm
+        self.total_latency = total_latency
 
     def __str__(self):
         return self.__repr__()
@@ -103,7 +105,7 @@ class LinsSolutionNoZ3:
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
-            f" tgs: {self.tgs *  (-(10**4))}"
+            f" tgs: {self.tgs *  (-(10**4))}, total_latency:{self.total_latency*10**3/10**4:.3f} ms"
             f" pp: {self.pp}"
             f" sp: {self.sp}"
             f" global bsz: {self.g_bsz} \n"
@@ -390,6 +392,197 @@ class Constraint:
         else:
             print("No solution found")
 
+    def cal_cost(
+        self, pp, sp, wp, zp, micro_bsz, micro_num, algo_type, world_size, activation_ckpt
+    ) -> LinsSolutionNoZ3:
+        parallel_conf = self.build_parallel_config(
+            algo_type, world_size, pp, sp, wp=wp, zp=zp
+        )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
+        if parallel_conf is None:
+            # A[pp_i][sp_i][wp_i][zp_i] = _100GB
+            # C[pp_i][sp_i][wp_i][zp_i] = 0
+            return None
+
+        now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
+
+        pp_num_layers, left = divmod(self._l, pp)
+        pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
+        if left != 0:
+            if self.debug:
+                print(f"NO solu: layer nums:{self._l} % pp:{pp} != 0!", flush=True)
+            return None
+
+        if algo_type in [AlgoType.MSP, AlgoType.FSP]:
+            wp_sp_pp_model_element = pp_model_element / wp / sp
+        else:
+            wp_sp_pp_model_element = pp_model_element / wp
+
+        p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
+        os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element / zp  # zp显存消耗
+
+        # 计算dp相关的通信开销
+        zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
+        # zp_comm_cost=0
+        if self.overlap_wdp:
+            wdp_comm_cost = 0
+
+        activation = get_memory_threshold(
+            algo=algo_type,
+            micro_batch_size=micro_bsz,
+            layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
+            sp_size=sp,
+            activation_ckpt=activation_ckpt,
+            hidden_dim=self._h,
+            sequence_length=self.seq_len,  # 这里一定要传入没切过的seqlen
+            use_fa=self.use_fa,
+            head_num=self._a,
+            dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
+        )  # isp激活的话，不需要除以wp，因为需要allgather
+
+        isp_mem_pool = 0
+        if algo_type == AlgoType.ISP:
+            isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
+
+        pp_p2p_buffer = get_p2p_buffer_size(self.dtype_size, self.seq_len, sp, micro_bsz, self._h) if pp > 1 else 0
+
+        # 下面这些激活的计算不受到重计算的影响
+        embedding_activation = get_embedding_output_mm(
+            micro_bsz,
+            self.seq_len,
+            self._h,
+            sp=sp,
+            algo=algo_type,
+            dtype_size=self.dtype_size,
+        )
+        norm_activation = get_norm_output_mm(micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size)
+        head_input_activation = get_head_input_mm(self.seq_len, self._h, dtype_size=self.dtype_size)
+        head_output_activation = get_head_output_mm(self.seq_len, self.vocab_size, dtype_size=self.dtype_size)
+        rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
+            seq_len=self.seq_len,
+            pp_size=pp,
+            hidden_dim=self._h,
+            head_nums=self._a,
+            layer_nums=self._l,
+            dtype_size=self.dtype_size,
+        )
+        # 对于pp0,占用的激活仍然是 layer_num 份
+        block_activation = (
+            pp_num_layers
+            * pp
+            * get_block_output_mm(micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size)
+        ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
+        activation = (
+            activation
+            + embedding_activation
+            + norm_activation
+            + head_input_activation
+            + head_output_activation
+            + block_activation
+            # + isp_mem_pool
+            + pp_p2p_buffer
+            + rotary_emb_sincos_cache_mm
+        )
+
+        # 总显存开销
+        mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
+        mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
+        mem_cost = max(mem_cost1, mem_cost2)
+        if mem_cost > self.mem_threshold:
+            # A[pp_i][sp_i][wp_i][zp_i] = _100GB
+            # C[pp_i][sp_i][wp_i][zp_i] = 0
+            if self.debug:
+                print(
+                    f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > mem_threshold: {self.mem_threshold/1024**3:.2f} GB ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
+                    flush=True,
+                )
+            return None
+        # else:
+        #     A[pp_i][sp_i][wp_i][zp_i] = mem_cost
+
+        try:
+            (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                micro_bsz=micro_bsz,
+                sp_size=sp,
+                pp_size=pp,
+                world_size=world_size,
+                ckpt=activation_ckpt,
+                seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
+                vocab_size=self.vocab_size,
+                dtype_size=self.dtype_size,
+                hidden_dim=self._h,
+                num_head=self._a,
+                mlp_ratio=self.mlp_ratio,
+                multiple_of=self.multiple_of,
+            )._get_overlap(algo_type)
+        except KeyError as e:
+            print(f"not found FA key: {e}", flush=True)
+            return None
+
+        def overlaped_fwd_bwd_cost():
+            return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn
+
+        if pp == 1:
+            fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
+            grad_acc = micro_num
+            all_fwd_bwd_cost = grad_acc * fwd_bwd_cost  # 算上梯度累积的fwdbwd开销
+            pp_comm_cost = 0
+        else:
+            fwd_bwd_cost = pp_num_layers * overlaped_fwd_bwd_cost()  # 1个pp micro step的fwd_bwd开销
+            all_fwd_bwd_cost = micro_num * fwd_bwd_cost  # pp的idea开销(不含bubble)
+            pp_p2p_cost = self.pp_comm_overhead(
+                pp_size=pp,
+                sp_size=sp,
+                micro_bsz=micro_bsz,
+                micro_num=micro_num,
+            )  # pp的p2p延迟
+            pp_bubble_cost = (pp - 1) * fwd_bwd_cost  # pp的bubble开销
+            pp_comm_cost = pp_p2p_cost + pp_bubble_cost  # pp总的额外开销
+
+        # C[pp_i][sp_i][wp_i][zp_i]
+        total_latency = all_fwd_bwd_cost + pp_comm_cost + wdp_comm_cost + zp_comm_cost  # fwd_bwd_cost 乘上梯度累加
+
+        # 计算tgs,为了方便取max这里乘了一个-1
+        tgs = (-1 * now_global_bsz) / (world_size * total_latency)
+
+        solu = LinsSolutionNoZ3(
+            pp=pp,
+            sp=sp,
+            wp=wp,
+            zp=zp,
+            seq_len=self.seq_len,
+            micro_bsz=micro_bsz,
+            micro_num=micro_num,
+            algo_type=algo_type,
+            pp_comm_cost=pp_comm_cost,
+            activation=activation,
+            zp_comm_cost=zp_comm_cost,
+            wp_comm_cost=wp_comm_cost,
+            sp_comm_cost=sp_comm_cost,
+            os_mm_cost=os_mm_cost,
+            p_g_mm_cost=p_g_mm_cost,
+            fwd_bwd_cost=fwd_bwd_cost,
+            mem_cost=mem_cost,
+            comp_wp=comp_wp,
+            comp_attn=comp_attn,
+            world_size=world_size,
+            activation_ckpt=activation_ckpt,
+            tgs=tgs,
+            mem_pool_mm=isp_mem_pool,
+            embedding_activation=embedding_activation,
+            norm_activation=norm_activation,
+            head_input_activation=head_input_activation,
+            head_output_activation=head_output_activation,
+            block_activation=block_activation,
+            wdp_comm_cost=wdp_comm_cost,
+            all_fwd_bwd_cost=all_fwd_bwd_cost,
+            g_bsz=now_global_bsz,
+            pp_p2p_buffer=pp_p2p_buffer,
+            rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
+            total_latency=total_latency,
+        )
+
+        return solu
+
     def run_loop(self, world_size):
         pp_search_range = PPIter(world_size, self._l)
         sp_search_range = SPIter(world_size, self._a)
@@ -424,14 +617,6 @@ class Constraint:
                 for micro_bsz, micro_num in bs_bns:
                     for algo_type in self._algo_list:
                         for activation_ckpt in [0, 1]:
-                            pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
-                            pp_num_layers, left = divmod(self._l, pp)
-                            if left != 0:
-                                if self.debug:
-                                    print(f"NO solu: layer nums:{self._l} % pp:{pp} != 0!", flush=True)
-                                continue
-                            # pp_num_layers += left
-
                             for wp_i, wp in enumerate(wp_search_ranges):
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                     if wp > 1:
@@ -474,209 +659,21 @@ class Constraint:
                                             continue
 
                                     # build device mesh
-                                    parallel_conf = self.build_parallel_config(
-                                        algo_type, world_size, pp, sp, wp=wp, zp=zp
-                                    )  # 建立device mesh, 在build gpc的时候会筛掉一些不合理的解
-                                    if parallel_conf is None:
-                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
-                                        C[pp_i][sp_i][wp_i][zp_i] = 0
-                                        continue
-
-                                    now_global_bsz = (
-                                        micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
-                                    )
-
-                                    if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                        wp_sp_pp_model_element = pp_model_element / wp / sp
-                                    else:
-                                        wp_sp_pp_model_element = pp_model_element / wp
-
-                                    p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
-                                    os_mm_cost = (
-                                        self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element / zp
-                                    )  # zp显存消耗
-
-                                    # 计算dp相关的通信开销
-                                    zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
-                                    # zp_comm_cost=0
-                                    if self.overlap_wdp:
-                                        wdp_comm_cost = 0
-
-                                    activation = get_memory_threshold(
-                                        algo=algo_type,
-                                        micro_batch_size=micro_bsz,
-                                        layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
-                                        sp_size=sp,
-                                        activation_ckpt=activation_ckpt,
-                                        hidden_dim=self._h,
-                                        sequence_length=self.seq_len,  # 这里一定要传入没切过的seqlen
-                                        use_fa=self.use_fa,
-                                        head_num=self._a,
-                                        dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
-                                    )  # isp激活的话，不需要除以wp，因为需要allgather
-
-                                    isp_mem_pool = 0
-                                    if algo_type == AlgoType.ISP:
-                                        isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
-
-                                    pp_p2p_buffer = (
-                                        get_p2p_buffer_size(self.dtype_size, self.seq_len, sp, micro_bsz, self._h)
-                                        if pp > 1
-                                        else 0
-                                    )
-
-                                    # 下面这些激活的计算不受到重计算的影响
-                                    embedding_activation = get_embedding_output_mm(
-                                        micro_bsz,
-                                        self.seq_len,
-                                        self._h,
-                                        sp=sp,
-                                        algo=algo_type,
-                                        dtype_size=self.dtype_size,
-                                    )
-                                    norm_activation = get_norm_output_mm(
-                                        micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
-                                    )
-                                    head_input_activation = get_head_input_mm(
-                                        self.seq_len, self._h, dtype_size=self.dtype_size
-                                    )
-                                    head_output_activation = get_head_output_mm(
-                                        self.seq_len, self.vocab_size, dtype_size=self.dtype_size
-                                    )
-                                    rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
-                                        seq_len=self.seq_len,
-                                        pp_size=pp,
-                                        hidden_dim=self._h,
-                                        head_nums=self._a,
-                                        layer_nums=self._l,
-                                        dtype_size=self.dtype_size,
-                                    )
-                                    # 对于pp0,占用的激活仍然是 layer_num 份
-                                    block_activation = (
-                                        pp_num_layers
-                                        * pp
-                                        * get_block_output_mm(
-                                            micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
-                                        )
-                                    ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
-                                    activation = (
-                                        activation
-                                        + embedding_activation
-                                        + norm_activation
-                                        + head_input_activation
-                                        + head_output_activation
-                                        + block_activation
-                                        + isp_mem_pool
-                                        + pp_p2p_buffer
-                                        + rotary_emb_sincos_cache_mm
-                                    )
-
-                                    # 总显存开销
-                                    mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
-                                    mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
-                                    mem_cost = max(mem_cost1, mem_cost2)
-                                    if mem_cost > self.mem_threshold:
-                                        A[pp_i][sp_i][wp_i][zp_i] = _100GB
-                                        C[pp_i][sp_i][wp_i][zp_i] = 0
-                                        if self.debug:
-                                            print(
-                                                f"NO solu: mem_cost: {mem_cost/1024**3:.2f} GB > mem_threshold: {self.mem_threshold/1024**3:.2f} GB ---- p_g_mm_cost: {p_g_mm_cost/1024**3:.2f} GB, os_mm_cost: {os_mm_cost/1024**3:.2f} GB, activation: {activation/1024**3:.2f} GB\n",
-                                                flush=True,
-                                            )
-                                        continue
-                                    else:
-                                        A[pp_i][sp_i][wp_i][zp_i] = mem_cost
-
-                                    try:
-                                        (
-                                            wp_comm_cost,
-                                            sp_comm_cost,
-                                            comp_wp,
-                                            comp_attn,
-                                        ) = TransformerOverlapOneLayer(
-                                            micro_bsz=micro_bsz,
-                                            sp_size=sp,
-                                            pp_size=pp,
-                                            world_size=world_size,
-                                            ckpt=activation_ckpt,
-                                            seq_len=self.seq_len,  # 这里需要传原始的seqlen,因为这个类里面还会切sp
-                                            vocab_size=self.vocab_size,
-                                            dtype_size=self.dtype_size,
-                                            hidden_dim=self._h,
-                                            num_head=self._a,
-                                            mlp_ratio=self.mlp_ratio,
-                                            multiple_of=self.multiple_of,
-                                        )._get_overlap(algo_type)
-                                    except KeyError as e:
-                                        print(f"not found FA key: {e}", flush=True)
-                                        continue
-
-                                    def overlaped_fwd_bwd_cost():
-                                        return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn
-
-                                    if pp == 1:
-                                        fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
-                                        grad_acc = micro_num
-                                        all_fwd_bwd_cost = grad_acc * fwd_bwd_cost  # 算上梯度累积的fwdbwd开销
-                                        pp_comm_cost = 0
-                                    else:
-                                        fwd_bwd_cost = (
-                                            pp_num_layers * overlaped_fwd_bwd_cost()
-                                        )  # 1个pp micro step的fwd_bwd开销
-                                        all_fwd_bwd_cost = micro_num * fwd_bwd_cost  # pp的idea开销(不含bubble)
-                                        pp_p2p_cost = self.pp_comm_overhead(
-                                            pp_size=pp,
-                                            sp_size=sp,
-                                            micro_bsz=micro_bsz,
-                                            micro_num=micro_num,
-                                        )  # pp的p2p延迟
-                                        pp_bubble_cost = (pp - 1) * fwd_bwd_cost  # pp的bubble开销
-                                        pp_comm_cost = pp_p2p_cost + pp_bubble_cost  # pp总的额外开销
-
-                                    C[pp_i][sp_i][wp_i][zp_i] = (
-                                        all_fwd_bwd_cost + pp_comm_cost + wdp_comm_cost + zp_comm_cost
-                                    )  # fwd_bwd_cost 乘上梯度累加
-
-                                    # 计算tgs,为了方便取max这里乘了一个-1
-                                    tgs = (-1 * now_global_bsz) / (world_size * C[pp_i][sp_i][wp_i][zp_i])
-
-                                    solu = LinsSolutionNoZ3(
+                                    solu = self.cal_cost(
                                         pp=pp,
                                         sp=sp,
                                         wp=wp,
                                         zp=zp,
-                                        seq_len=self.seq_len,
                                         micro_bsz=micro_bsz,
                                         micro_num=micro_num,
                                         algo_type=algo_type,
-                                        pp_comm_cost=pp_comm_cost,
-                                        activation=activation,
-                                        zp_comm_cost=zp_comm_cost,
-                                        wp_comm_cost=wp_comm_cost,
-                                        sp_comm_cost=sp_comm_cost,
-                                        os_mm_cost=os_mm_cost,
-                                        p_g_mm_cost=p_g_mm_cost,
-                                        fwd_bwd_cost=fwd_bwd_cost,
-                                        mem_cost=mem_cost,
-                                        comp_wp=comp_wp,
-                                        comp_attn=comp_attn,
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
-                                        tgs=tgs,
-                                        mem_pool_mm=isp_mem_pool,
-                                        embedding_activation=embedding_activation,
-                                        norm_activation=norm_activation,
-                                        head_input_activation=head_input_activation,
-                                        head_output_activation=head_output_activation,
-                                        block_activation=block_activation,
-                                        wdp_comm_cost=wdp_comm_cost,
-                                        all_fwd_bwd_cost=all_fwd_bwd_cost,
-                                        g_bsz=now_global_bsz,
-                                        pp_p2p_buffer=pp_p2p_buffer,
-                                        rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
                                     )
+                                    if solu is None:
+                                        continue
 
-                                    cost = tgs
+                                    cost = solu.tgs
                                     if cost < self.min_comm_cost:
                                         self.min_comm_cost = cost
                                         self.min_cost_solution = solu
