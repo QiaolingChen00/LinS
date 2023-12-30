@@ -28,8 +28,8 @@ class AlgoType:
 
 class BW:
     IB = 100 * 1024**3
-    A800_NVL = 200 * 1024**3
-    A100_NVL = 300 * 1024**3
+    A800_NVL = 150 * 1024**3  # 满速是 200 GB/s
+    A100_NVL = 250 * 1024**3  # 满速是 300 GB/s
 
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]

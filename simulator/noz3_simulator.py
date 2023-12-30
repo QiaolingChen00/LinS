@@ -59,6 +59,7 @@ class LinsSolutionNoZ3:
         g_bsz,
         pp_p2p_buffer,
         rotary_emb_sincos_cache_mm,
+        modelsize,
     ):
         self.pp = pp
         self.sp = sp
@@ -96,6 +97,7 @@ class LinsSolutionNoZ3:
         self.g_bsz = g_bsz
         self.pp_p2p_buffer = pp_p2p_buffer
         self.rotary_emb_sincos_cache_mm = rotary_emb_sincos_cache_mm
+        self.modelsize = modelsize
 
     def __str__(self):
         return self.__repr__()
@@ -103,18 +105,16 @@ class LinsSolutionNoZ3:
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
-            f" tgs: {self.tgs *  (-(10**4))}"
-            f" pp: {self.pp}"
-            f" sp: {self.sp}"
+            f" tgs: {self.tgs * -1}"
             f" global bsz: {self.g_bsz} \n"
             f" activation ckpt: {self.activation_ckpt}"
             f" seq_len: {self.seq_len}"
             f" micro_bsz: {self.micro_bsz}"
-            f" micro_num: {self.micro_num}"
-            f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
-            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms, \n"
-            f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms \n"
-            f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
+            f" micro_num: {self.micro_num}, \n"
+            f" modelsize: {self.modelsize}, algo_type: {self.algo_type}, pp_size: {self.pp}, sp_size: {self.sp}, wp_size: {self.wp_size}, zp_size: {self.zp_size}, \n"
+            f" one layer fwd_bwd_cost: {self. fwd_bwd_cost*10**3:.2f} ms, all_layer_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
+            f" COMP: comp_wp: {self.comp_wp*10**3:.2f} ms, comp_attn: {self.comp_attn*10**3:.2f} ms, \n"
+            f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB \n"
             f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
@@ -617,7 +617,11 @@ class Constraint:
 
                                     def overlaped_fwd_bwd_cost():
                                         # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
-                                        return max(wp_comm_cost, comp_wp) * 1.2 + sp_comm_cost + comp_attn
+                                        return (
+                                            max(wp_comm_cost * self._wp_penalty_coefficient, comp_wp)
+                                            + sp_comm_cost
+                                            + comp_attn
+                                        )
 
                                     if pp == 1:
                                         fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
@@ -657,7 +661,7 @@ class Constraint:
                                         pp_comm_cost=pp_comm_cost,
                                         activation=activation,
                                         zp_comm_cost=zp_comm_cost,
-                                        wp_comm_cost=wp_comm_cost,
+                                        wp_comm_cost=wp_comm_cost * self._wp_penalty_coefficient,
                                         sp_comm_cost=sp_comm_cost,
                                         os_mm_cost=os_mm_cost,
                                         p_g_mm_cost=p_g_mm_cost,
@@ -679,6 +683,7 @@ class Constraint:
                                         g_bsz=now_global_bsz,
                                         pp_p2p_buffer=pp_p2p_buffer,
                                         rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
+                                        modelsize=self.model_size,
                                     )
 
                                     cost = tgs
