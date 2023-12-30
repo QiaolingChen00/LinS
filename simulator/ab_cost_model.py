@@ -61,10 +61,11 @@ def get_comm_cost(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostTy
         num_partner = gpc.same_group_in_one_node(parallel_mode)
         # if parallel_mode == ParallelMode.ZERO1:
         #     assert num_partner == 1
-        comm_volume = comm_volume * num_partner
+        assert num_partner <= 8, f"num_partner: {num_partner}"
+        comm_volume *= num_partner
 
     bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
-    return int(1000 * 10 * coll_algo_bw(comm_op, comm_volume, scale) / bw)  # 转换成ms小数点保留两位
+    return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
 
 
 allgather = functools.partial(get_comm_cost, comm_op=CostType.ALLGATHER)

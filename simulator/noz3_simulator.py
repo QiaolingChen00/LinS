@@ -60,6 +60,7 @@ class LinsSolutionNoZ3:
         pp_p2p_buffer,
         rotary_emb_sincos_cache_mm,
         total_latency,
+        modelsize,
     ):
         self.pp = pp
         self.sp = sp
@@ -98,6 +99,7 @@ class LinsSolutionNoZ3:
         self.pp_p2p_buffer = pp_p2p_buffer
         self.rotary_emb_sincos_cache_mm = rotary_emb_sincos_cache_mm
         self.total_latency = total_latency
+        self.modelsize = modelsize
 
     def __str__(self):
         return self.__repr__()
@@ -105,18 +107,18 @@ class LinsSolutionNoZ3:
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
-            f" tgs: {self.tgs *  (-(10**4))}, total_latency:{self.total_latency*10**3/10**4:.3f} ms"
             f" pp: {self.pp}"
             f" sp: {self.sp}"
+            f" tgs: {self.tgs * -1}, total_latency:{self.total_latency*10**3:.3f} ms"
             f" global bsz: {self.g_bsz} \n"
             f" activation ckpt: {self.activation_ckpt}"
             f" seq_len: {self.seq_len}"
             f" micro_bsz: {self.micro_bsz}"
-            f" micro_num: {self.micro_num}"
-            f" algo_type: {self.algo_type}, wp_size: {self.wp_size}, zp_size: {self.zp_size}"
-            f" total fwd_bwd_cost: {self. fwd_bwd_cost*10**3/10**4:.2f} ms, pp_comm_cost: {self.pp_comm_cost*10**3/10**4:.2f} ms, \n"
-            f" zp_comm_cost: {self.zp_comm_cost*10**3/10**4:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3/10**4:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3/10**4:.2f} ms \n"
-            f" comp_wp: {self.comp_wp*10**3/10**4:.2f} ms, comp_attn: {self.comp_attn*10**3/10**4:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3/10**4:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3/10**4:.2f} ms, \n"
+            f" micro_num: {self.micro_num}, \n"
+            f" modelsize: {self.modelsize}, algo_type: {self.algo_type}, pp_size: {self.pp}, sp_size: {self.sp}, wp_size: {self.wp_size}, zp_size: {self.zp_size}, \n"
+            f" one layer fwd_bwd_cost: {self. fwd_bwd_cost*10**3:.2f} ms, all_layer_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
+            f" COMP: comp_wp: {self.comp_wp*10**3:.2f} ms, comp_attn: {self.comp_attn*10**3:.2f} ms, \n"
+            f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
             f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB \n"
             f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
@@ -200,8 +202,9 @@ class Constraint:
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  #
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
         self._use_strict_bsz = use_strict_bsz
+        self._wp_penalty_coefficient = config.wp_penalty_coefficient
         if self._use_strict_bsz:
             assert (
                 not self.use_fixed_micro_bsz
@@ -243,7 +246,7 @@ class Constraint:
         bsz = self.global_bsz // dp_world_size // seq_len
 
         micro_bsz_num = []
-        for micro_bsz in range(1, int(bsz**0.5) + 1):
+        for micro_bsz in range(1, bsz + 1):
             if bsz % micro_bsz == 0:
                 micro_num = bsz // micro_bsz
                 if micro_num >= pp_size:  # 我们暂时不考虑 micro_num < pp_size 的情况
@@ -300,11 +303,12 @@ class Constraint:
         )
         return p2p_latency
 
-    def comm_dp_cost(self, algo, wp_sp_pp_model_element) -> float:
+    def comm_dp_cost(self, algo, wp_sp_pp_model_element, zp) -> float:
         """切分OS引入的参数同步的通信开销"""
 
         # zero引入的参数同步开销, 这里传入的是一个dp rank的通信量
         shared_nums = gpc.get_world_size(ParallelMode.ZERO1)
+        assert zp == shared_nums
         buffer_size = self.dtype_size * wp_sp_pp_model_element / shared_nums
         zp_latency = shared_nums * broadcast(buffer_size, ParallelMode.ZERO1)
 
@@ -405,23 +409,27 @@ class Constraint:
 
         now_global_bsz = micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
 
+        pp_model_element = self._param_elements / pp
         pp_num_layers, left = divmod(self._l, pp)
-        pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
         if left != 0:
             if self.debug:
-                print(f"NO solu: layer nums:{self._l} % pp:{pp} != 0!", flush=True)
+                print(f"pp layer can't spilit by pp: {pp}", flush=True)
             return None
 
         if algo_type in [AlgoType.MSP, AlgoType.FSP]:
             wp_sp_pp_model_element = pp_model_element / wp / sp
+            total_os_element = wp_sp_pp_model_element / zp
+            os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
+            p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
         else:
-            wp_sp_pp_model_element = pp_model_element / wp
+            head_os_element = self.vocab_size * self._h
+            tp_head_os_element = head_os_element / sp
+            wp_sp_pp_model_element = (pp_model_element - head_os_element) / wp
+            total_os_element = wp_sp_pp_model_element / zp + tp_head_os_element
+            os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
+            p_g_mm_cost = 2 * self.dtype_size * (wp_sp_pp_model_element + tp_head_os_element)  # wp显存消耗
 
-        p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
-        os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element / zp  # zp显存消耗
-
-        # 计算dp相关的通信开销
-        zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
+        zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, total_os_element, zp)  # 计算dp相关的通信开销
         # zp_comm_cost=0
         if self.overlap_wdp:
             wdp_comm_cost = 0
@@ -429,7 +437,7 @@ class Constraint:
         activation = get_memory_threshold(
             algo=algo_type,
             micro_batch_size=micro_bsz,
-            layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
+            layer_num=self._l,  # 显存阈值根据pp0来计算
             sp_size=sp,
             activation_ckpt=activation_ckpt,
             hidden_dim=self._h,
@@ -455,9 +463,12 @@ class Constraint:
             dtype_size=self.dtype_size,
         )
         norm_activation = get_norm_output_mm(micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size)
-        head_input_activation = get_head_input_mm(self.seq_len, self._h, dtype_size=self.dtype_size)
-        head_output_activation = get_head_output_mm(self.seq_len, self.vocab_size, dtype_size=self.dtype_size)
+        head_input_activation = get_head_input_mm(micro_bsz, self.seq_len, self._h, dtype_size=self.dtype_size)
+        head_output_activation = get_head_output_mm(
+            micro_bsz, self.seq_len, self.vocab_size, dtype_size=self.dtype_size
+        )
         rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
+            micro_bsz,
             seq_len=self.seq_len,
             pp_size=pp,
             hidden_dim=self._h,
@@ -478,7 +489,7 @@ class Constraint:
             + head_input_activation
             + head_output_activation
             + block_activation
-            # + isp_mem_pool
+            + isp_mem_pool
             + pp_p2p_buffer
             + rotary_emb_sincos_cache_mm
         )
@@ -519,7 +530,8 @@ class Constraint:
             return None
 
         def overlaped_fwd_bwd_cost():
-            return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn
+            # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
+            return max(wp_comm_cost * self._wp_penalty_coefficient, comp_wp) + sp_comm_cost + comp_attn
 
         if pp == 1:
             fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
@@ -556,7 +568,7 @@ class Constraint:
             pp_comm_cost=pp_comm_cost,
             activation=activation,
             zp_comm_cost=zp_comm_cost,
-            wp_comm_cost=wp_comm_cost,
+            wp_comm_cost=wp_comm_cost * self._wp_penalty_coefficient,
             sp_comm_cost=sp_comm_cost,
             os_mm_cost=os_mm_cost,
             p_g_mm_cost=p_g_mm_cost,
@@ -578,9 +590,9 @@ class Constraint:
             g_bsz=now_global_bsz,
             pp_p2p_buffer=pp_p2p_buffer,
             rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
+            modelsize=self.model_size,
             total_latency=total_latency,
         )
-
         return solu
 
     def run_loop(self, world_size):
