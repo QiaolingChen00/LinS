@@ -497,7 +497,7 @@ class ParallelContext:
         for g_rank in pg_group_ranks:
             if g_rank < 8:
                 same_node_rank_nums += 1
-        return same_node_rank_nums
+        return 1 if same_node_rank_nums == 0 else same_node_rank_nums
 
 
 global_context = ParallelContext()
