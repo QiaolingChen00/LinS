@@ -3,11 +3,11 @@ from utils.common import AlgoType, CostType
 
 
 def get_linear_cost(complexity):
-    return 1000 * 10 * get_predict_or_kv_cost(CostType.LINEAR, complexity)  # 转换成ms小数点保留两位
+    return get_predict_or_kv_cost(CostType.LINEAR, complexity)  # 转换成ms小数点保留两位
 
 
 def get_atten_cost_polynomial(complexity):
-    return int(1000 * 10 * get_predict_or_kv_cost(CostType.LINEAR, complexity))
+    return get_predict_or_kv_cost(CostType.LINEAR, complexity)
 
 
 def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
@@ -23,20 +23,15 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
     Returns:
         int: latency of fa, unit is second.
     """
-    predict = (
-        1000
-        * 10
-        * get_predict_or_kv_cost(
-            CostType.FLASH_ATTN,
-            complexity=0,
-            micro_bsz=micro_bsz,
-            seq_len=seq_len,
-            embed_dim=head_dim,
-            num_heads=num_heads,
-            tp_size=sp_tp,
-        )
+    predict = get_predict_or_kv_cost(
+        CostType.FLASH_ATTN,
+        complexity=0,
+        micro_bsz=micro_bsz,
+        seq_len=seq_len,
+        embed_dim=head_dim,
+        num_heads=num_heads,
+        tp_size=sp_tp,
     )
-
     # import pdb; pdb.set_trace()
 
     return predict
