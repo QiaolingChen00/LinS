@@ -198,8 +198,9 @@ class Constraint:
         self._param_elements = float(self.model_size * 10**9)
         self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
         self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
-        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]  #
+        self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
         self._use_strict_bsz = use_strict_bsz
+        self._wp_penalty_coefficient = config.wp_penalty_coefficient
         if self._use_strict_bsz:
             assert (
                 not self.use_fixed_micro_bsz
@@ -241,7 +242,7 @@ class Constraint:
         bsz = self.global_bsz // dp_world_size // seq_len
 
         micro_bsz_num = []
-        for micro_bsz in range(1, int(bsz**0.5) + 1):
+        for micro_bsz in range(1, bsz + 1):
             if bsz % micro_bsz == 0:
                 micro_num = bsz // micro_bsz
                 if micro_num >= pp_size:  # 我们暂时不考虑 micro_num < pp_size 的情况
@@ -298,11 +299,12 @@ class Constraint:
         )
         return p2p_latency
 
-    def comm_dp_cost(self, algo, wp_sp_pp_model_element) -> float:
+    def comm_dp_cost(self, algo, wp_sp_pp_model_element, zp) -> float:
         """切分OS引入的参数同步的通信开销"""
 
         # zero引入的参数同步开销, 这里传入的是一个dp rank的通信量
         shared_nums = gpc.get_world_size(ParallelMode.ZERO1)
+        assert zp == shared_nums
         buffer_size = self.dtype_size * wp_sp_pp_model_element / shared_nums
         zp_latency = shared_nums * broadcast(buffer_size, ParallelMode.ZERO1)
 
@@ -488,16 +490,22 @@ class Constraint:
 
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                         wp_sp_pp_model_element = pp_model_element / wp / sp
+                                        total_os_element = wp_sp_pp_model_element / zp
+                                        os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
+                                        p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
                                     else:
-                                        wp_sp_pp_model_element = pp_model_element / wp
+                                        head_os_element = self.vocab_size * self._h
+                                        tp_head_os_element = head_os_element / sp
+                                        wp_sp_pp_model_element = (pp_model_element - head_os_element) / wp
+                                        total_os_element = wp_sp_pp_model_element / zp + tp_head_os_element
+                                        os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
+                                        p_g_mm_cost = (
+                                            2 * self.dtype_size * (wp_sp_pp_model_element + tp_head_os_element)
+                                        )  # wp显存消耗
 
-                                    p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
-                                    os_mm_cost = (
-                                        self.dtype_size * self.fp32_ratio * 3 * wp_sp_pp_model_element / zp
-                                    )  # zp显存消耗
-
-                                    # 计算dp相关的通信开销
-                                    zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(algo_type, wp_sp_pp_model_element)
+                                    zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(
+                                        algo_type, total_os_element, zp
+                                    )  # 计算dp相关的通信开销
                                     # zp_comm_cost=0
                                     if self.overlap_wdp:
                                         wdp_comm_cost = 0
@@ -505,7 +513,7 @@ class Constraint:
                                     activation = get_memory_threshold(
                                         algo=algo_type,
                                         micro_batch_size=micro_bsz,
-                                        layer_num=pp_num_layers * pp,  # 显存阈值根据pp0来计算
+                                        layer_num=self._l,  # 显存阈值根据pp0来计算
                                         sp_size=sp,
                                         activation_ckpt=activation_ckpt,
                                         hidden_dim=self._h,
@@ -538,12 +546,13 @@ class Constraint:
                                         micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
                                     )
                                     head_input_activation = get_head_input_mm(
-                                        self.seq_len, self._h, dtype_size=self.dtype_size
+                                        micro_bsz, self.seq_len, self._h, dtype_size=self.dtype_size
                                     )
                                     head_output_activation = get_head_output_mm(
-                                        self.seq_len, self.vocab_size, dtype_size=self.dtype_size
+                                        micro_bsz, self.seq_len, self.vocab_size, dtype_size=self.dtype_size
                                     )
                                     rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
+                                        micro_bsz,
                                         seq_len=self.seq_len,
                                         pp_size=pp,
                                         hidden_dim=self._h,
@@ -588,12 +597,7 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (
-                                            wp_comm_cost,
-                                            sp_comm_cost,
-                                            comp_wp,
-                                            comp_attn,
-                                        ) = TransformerOverlapOneLayer(
+                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
@@ -612,7 +616,8 @@ class Constraint:
                                         continue
 
                                     def overlaped_fwd_bwd_cost():
-                                        return max(wp_comm_cost, comp_wp) + sp_comm_cost + comp_attn
+                                        # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
+                                        return max(wp_comm_cost, comp_wp) * 1.2 + sp_comm_cost + comp_attn
 
                                     if pp == 1:
                                         fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
