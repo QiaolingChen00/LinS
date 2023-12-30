@@ -61,6 +61,7 @@ def get_comm_cost(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostTy
         num_partner = gpc.same_group_in_one_node(parallel_mode)
         # if parallel_mode == ParallelMode.ZERO1:
         #     assert num_partner == 1
+        assert num_partner <= 8, f"num_partner: {num_partner}"
         comm_volume = comm_volume * num_partner
 
     bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))

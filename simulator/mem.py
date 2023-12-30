@@ -35,12 +35,24 @@ def get_isp_memory_threshold(
     if activation_ckpt:
         layer_num = 1
 
+    """
+        (1) attention: 11*bsh
+        (4) Dropout mask: bsh
+        (5) MLP: 2 * (1 + 8/3 + 8/3 + 8/3)* bsh = 18 * bsh
+                w1_o = self.w1(x)
+                w2_o = self.w2(x)
+                w3_in = Silu(w1_o, w2_o)
+                out = self.w3(w3_in)
+        (6) layer norm(norm的输入需要转成fp32): 2*4*bsh
+
+        total: 11bsh + bsh + 18bsh + 8bsh = 38bsh
+    """
     activation = (
         dtype_size
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        * (38 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
         / sp_size
     ) * layer_num
     return activation
@@ -65,7 +77,7 @@ def get_msp_memory_threshold(
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (4 + 30 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))
+        * (4 + 34 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))  # TODO: check
     ) * layer_num
     return activation
 
@@ -89,7 +101,7 @@ def get_fsp_memory_threshold(
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (34 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        * (38 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
         / sp_size
     ) * layer_num  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
     return activation
@@ -143,21 +155,21 @@ def get_norm_output_mm(micro_bsz, seq_len, hidden_dim, sp, dtype_size):
 
 
 # head output
-def get_head_output_mm(seq_len, vocab_size, dtype_size):
+def get_head_output_mm(micro_bsz, seq_len, vocab_size, dtype_size):
     # [seq_len, vocab_size]
-    return dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
+    return micro_bsz * dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
 
 # head output
-def get_head_input_mm(seq_len, hidden_dim, dtype_size):
+def get_head_input_mm(micro_bsz, seq_len, hidden_dim, dtype_size):
     # [seq_len, vocab_size]
-    return dtype_size * seq_len * hidden_dim
+    return micro_bsz * dtype_size * seq_len * hidden_dim
 
 
 # rotary embedding sin/cos cache
-def get_rotary_emb_sincos_cache_mm(seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
+def get_rotary_emb_sincos_cache_mm(micro_bsz, seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
     # [sin,cos] * dtype_size * pp切后的layer_nums * 不切的seq_len * head_dim // 2
-    return 2 * dtype_size * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
+    return 2 * dtype_size * micro_bsz * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
 
 
 def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
@@ -167,7 +179,7 @@ def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
     module_out_proj = hidden_size * hidden_size * dtype_size
     module_w1 = mlp_hidden_size * hidden_size * dtype_size
     module_w2 = mlp_hidden_size * hidden_size * dtype_size
-    module_w3 = hidden_size * mlp_hidden_size * dtype_size
+    module_w3 = mlp_hidden_size * hidden_size * dtype_size
     prefetch_two_layers_weight = 2 * (module_Wqkv + module_out_proj + module_w1 + module_w2 + module_w3)
 
     return prefetch_two_layers_weight * 2  # all_gather + reduce_scatter approximately
