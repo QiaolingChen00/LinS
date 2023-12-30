@@ -6,10 +6,10 @@ with open(template_file_path, "r") as template_file:
     template_content = template_file.read()
 
 # 配置参数
-# model_size_list = [7, 13, 30, 65]
-# seq_len_list = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
-model_size_list = [65]
-seq_len_list = [131072]
+model_size_list = [7, 13, 30, 65]
+seq_len_list = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
+# model_size_list = [65]
+# seq_len_list = [131072]
 
 # 生成配置文件并执行命令
 for model_size in model_size_list:
