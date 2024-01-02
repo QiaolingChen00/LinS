@@ -33,6 +33,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
         tp_size=sp_tp,
     )
     # import pdb; pdb.set_trace()
+    print(f"WGT: predict:{predict}, micro_bsz:{micro_bsz}, seq_len:{seq_len}, head_dim:{head_dim}, num_heads:{num_heads}, sp_tp:{sp_tp}", flush=True)
 
     return predict
 

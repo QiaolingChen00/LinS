@@ -39,6 +39,12 @@ def filter_kwargs(func, kwargs):
     sig = inspect.signature(func)
     return {k: v for k, v in kwargs.items() if k in sig.parameters}
 
+def debug_profile(bench, test_case):
+    if 'lat' not in test_case:
+        test_case['lat'] = int.Maximum
+
+    print(f"{bench.complexity()}: micro_bsz: {test_case['micro_bsz']}, seq_len: {test_case['seq_len']}, num_heads_and_hidden_dim: {test_case['num_heads_and_hidden_dim']}, tp_size {test_case['tp_size']}, lat: {test_case['lat']}", flush=True)
+
 
 def run_profile(args, test_type):
     re_results = {}
@@ -106,7 +112,8 @@ def run_profile(args, test_type):
             sync_all()
             avg_duration = run_benchmark(bench, args)
             test_case["lat"] = avg_duration
-            print(f"{bench.complexity()}: seq_len: {test_case['seq_len']}, num_heads_and_hidden_dim: {test_case['num_heads_and_hidden_dim']}, tp_size {test_case['tp_size']}, lat: {test_case['lat']}", flush=True)
+        
+        debug_profile(bench=bench, test_case=test_case)
 
         # assert bench.complexity() not in re_results
         # re_results[bench.complexity()] = test_case

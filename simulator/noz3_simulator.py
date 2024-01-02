@@ -19,7 +19,7 @@ from simulator.overlap import TransformerOverlapOneLayer
 
 # from comm import TransformerCommunication
 # from utils.utils import _get_model_config
-from utils.common import _100GB, GB, AlgoType, get_model_config
+from utils.common import _100GB, GB, AlgoType, cal_block_p_elem, get_model_config
 from utils.config import Config
 
 
@@ -195,9 +195,10 @@ class Constraint:
         self.use_fa = config.use_fa
         self.mem_threshold = config.mem_threshold
         self.fp32_ratio = max(1, 4 // self.dtype_size)
-        self._param_elements = float(self.model_size * 10**9)
-        self._param_size_in_byte = self.model_size * self.dtype_size * 10**9
-        self._h, self._a, self._l, self.mlp_ratio, self.multiple_of = get_model_config(self.model_size)
+        # self._param_elements = float(self.model_size * 10**9)
+        self._h, self._a, self._l, self.mlp_ratio, self.multiple_of, self._param_elements = get_model_config(
+            self.model_size
+        )
         self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
         self._use_strict_bsz = use_strict_bsz
         self._wp_penalty_coefficient = config.wp_penalty_coefficient
@@ -299,24 +300,27 @@ class Constraint:
         )
         return p2p_latency
 
-    def comm_dp_cost(self, algo, wp_sp_pp_model_element, zp) -> float:
+    def comm_dp_cost(self, algo, pp_blocks_elem, embedding_elem, zp) -> float:
         """切分OS引入的参数同步的通信开销"""
-
-        # zero引入的参数同步开销, 这里传入的是一个dp rank的通信量
-        shared_nums = gpc.get_world_size(ParallelMode.ZERO1)
-        assert zp == shared_nums
-        buffer_size = self.dtype_size * wp_sp_pp_model_element / shared_nums
-        zp_latency = shared_nums * broadcast(buffer_size, ParallelMode.ZERO1)
-
         # wdp引入的通信开销, 这里传入的是一个dp rank视角下的通信量
         # msp和fsp的参数被tp切了，需要除以sp_size
         # isp的参数被wp切了，需要除以wp_size
-        if algo == AlgoType.MSP:
-            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.DATA)
-        elif algo == AlgoType.FSP:
-            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.DATA)
+        if algo in [AlgoType.MSP, AlgoType.FSP]:
+            # 同步梯度
+            wdp_latency = allreduce(self.dtype_size * (pp_blocks_elem + embedding_elem), ParallelMode.DATA)
+
+            # 同步参数
+            zp_latency = zp * broadcast(self.dtype_size * (pp_blocks_elem + embedding_elem) / zp, ParallelMode.ZERO1)
         elif algo == AlgoType.ISP:
-            wdp_latency = allreduce(wp_sp_pp_model_element, ParallelMode.WEIGHT_DATA)
+            # 同步梯度
+            wdp_block_latency = allreduce(self.dtype_size * pp_blocks_elem, ParallelMode.WEIGHT_DATA)
+            wdp_embedding_latency = allreduce(self.dtype_size * embedding_elem, ParallelMode.DATA)
+            wdp_latency = wdp_block_latency + wdp_embedding_latency
+
+            # 同步参数
+            block_zp_latency = zp * broadcast(self.dtype_size * pp_blocks_elem / zp, ParallelMode.ZERO1)
+            embedding_zp_latency = broadcast(self.dtype_size * embedding_elem, ParallelMode.DATA)
+            zp_latency = block_zp_latency + embedding_zp_latency
 
         return zp_latency, wdp_latency
 
@@ -356,6 +360,42 @@ class Constraint:
             return None
         else:
             return parallel_conf
+
+    # partition_uniform(num_layers, pipeline_size, num_chunks)
+    def partition_uniform(self, num_layers, pipeline_parallel_size, num_chunks):
+        assert (
+            num_layers % num_chunks == 0
+        ), "Layer length should be divided by the number of chunks, otherwise parameter method is recomended"
+
+        parts = [[] for _ in range(pipeline_parallel_size)]
+        partition_items = num_layers // num_chunks
+        for idx in range(num_chunks):
+            base_idx = idx * partition_items
+            chunk_size = partition_items // pipeline_parallel_size
+            left = pipeline_parallel_size - partition_items % pipeline_parallel_size
+            if chunk_size == 0:
+                raise ValueError("Some nodes in Pipeline have no requests")
+
+            for p in range(pipeline_parallel_size):
+                st = base_idx
+                # 由于 (p >= left), head必然会被分配到后面的pp rank上，因此峰值只需要考虑 pp0 + embedding
+                base_idx += chunk_size + (p >= left)
+                parts[p].append((st, base_idx))
+
+        indexes = []
+        indexes_pp0 = []
+        for pp_rank, _parts in enumerate(parts):
+            for s, e in _parts:
+                indexes.extend(list(range(s, e)))
+                if pp_rank == 0:
+                    indexes_pp0.extend(list(range(s, e)))
+        assert num_chunks == 1, "not support num_chunks > 1!"
+        assert len(indexes) == len(set(indexes)), indexes  # should have no duplicates
+        assert set(indexes) == set(list(range(num_layers))), (
+            indexes,
+            num_layers,
+        )  # should have the same indexes as expected
+        return len(indexes_pp0)  # 我们只要知道 pp rank0 被分到了多少个 layer
 
     def run_flexible_worldsize_loop(self):
         max_node_num = self.max_world_size // 8
@@ -406,6 +446,12 @@ class Constraint:
         C = copy.deepcopy(A)
 
         for pp_i, pp in enumerate(pp_search_range):
+            pp_num_layers = self.partition_uniform(num_layers=self._l, pipeline_parallel_size=pp, num_chunks=1)
+            print(f"pp_num_layers: {pp_num_layers}, pp:{pp}", flush=True)
+            one_layer_elem = cal_block_p_elem(self._h, multiple_of=self.multiple_of, mlp_ratio=self.mlp_ratio)
+            embedding_elem = self.vocab_size * self._h
+            pp_blocks_elem = pp_num_layers * one_layer_elem
+
             for sp_i, sp in enumerate(sp_search_range):
                 if not self.use_fixed_micro_bsz:
                     if self._use_strict_bsz:
@@ -426,14 +472,6 @@ class Constraint:
                 for micro_bsz, micro_num in bs_bns:
                     for algo_type in self._algo_list:
                         for activation_ckpt in [0, 1]:
-                            pp_model_element = self._param_elements / pp  # 被pp切后的模型参数大小
-                            pp_num_layers, left = divmod(self._l, pp)
-                            if left != 0:
-                                if self.debug:
-                                    print(f"NO solu: layer nums:{self._l} % pp:{pp} != 0!", flush=True)
-                                continue
-                            # pp_num_layers += left
-
                             for wp_i, wp in enumerate(wp_search_ranges):
                                 if algo_type in [AlgoType.MSP, AlgoType.FSP]:
                                     if wp > 1:
@@ -488,24 +526,34 @@ class Constraint:
                                         micro_bsz * micro_num * self.seq_len * gpc.get_world_size(ParallelMode.DATA)
                                     )
 
+                                    dp = gpc.get_world_size(ParallelMode.DATA)
+                                    embedding_dp_shared_range = 1 if dp <= 1 else 2
+                                    head_num = 1 if pp > 1 else 2
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
-                                        wp_sp_pp_model_element = pp_model_element / wp / sp
-                                        total_os_element = wp_sp_pp_model_element / zp
+                                        embedding_elem_parallel = head_num * embedding_elem / wp / sp
+                                        block_elem_parallel = pp_blocks_elem / wp / sp
+                                        total_p_element = block_elem_parallel + embedding_elem_parallel
+                                        total_os_element = total_p_element / zp
                                         os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
-                                        p_g_mm_cost = 2 * self.dtype_size * wp_sp_pp_model_element  # wp显存消耗
+                                        p_g_mm_cost = 2 * self.dtype_size * total_p_element  # wp显存消耗
                                     else:
-                                        head_os_element = self.vocab_size * self._h
-                                        tp_head_os_element = head_os_element / sp
-                                        wp_sp_pp_model_element = (pp_model_element - head_os_element) / wp
-                                        total_os_element = wp_sp_pp_model_element / zp + tp_head_os_element
+                                        embedding_elem_parallel = head_num * embedding_elem / sp
+                                        block_elem_parallel = pp_blocks_elem / wp
+                                        total_p_element = block_elem_parallel + embedding_elem_parallel
+                                        total_os_element = (
+                                            block_elem_parallel / zp
+                                            + embedding_elem_parallel / embedding_dp_shared_range
+                                        )  # embeding不会被zp切
                                         os_mm_cost = self.dtype_size * self.fp32_ratio * 3 * total_os_element  # zp显存消耗
-                                        p_g_mm_cost = (
-                                            2 * self.dtype_size * (wp_sp_pp_model_element + tp_head_os_element)
-                                        )  # wp显存消耗
+                                        p_g_mm_cost = 2 * self.dtype_size * total_p_element  # wp显存消耗
 
                                     zp_comm_cost, wdp_comm_cost = self.comm_dp_cost(
-                                        algo_type, total_os_element, zp
+                                        algo=algo_type,
+                                        pp_blocks_elem=block_elem_parallel,
+                                        embedding_elem=embedding_elem_parallel,
+                                        zp=zp,
                                     )  # 计算dp相关的通信开销
+
                                     # zp_comm_cost=0
                                     if self.overlap_wdp:
                                         wdp_comm_cost = 0
@@ -683,7 +731,7 @@ class Constraint:
                                         g_bsz=now_global_bsz,
                                         pp_p2p_buffer=pp_p2p_buffer,
                                         rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
-                                        modelsize=self.model_size,
+                                        modelsize=self._param_elements / 10**9,
                                     )
 
                                     cost = tgs
