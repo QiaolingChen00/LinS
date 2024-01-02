@@ -494,10 +494,10 @@ class Constraint:
                                         print(f"NO solu: head assert {e}", flush=True)
                                     continue
 
-                                for zp_i, zp in enumerate(range(1, zp_search_range)):
+                                for zp_i, zp in enumerate(range(1, zp_search_range + 1)):
                                     if self.debug:
                                         print(
-                                            f"------------------- Begin: world_size: {world_size}, pp:{pp}, sp:{sp}, micro_bsz:{micro_bsz}, micro_num:{micro_num}, algo_type:{algo_type}, wp:{wp}, zp:{zp} -------------------",
+                                            f"------------------- Begin: world_size: {world_size}, pp:{pp}, sp:{sp}, micro_bsz:{micro_bsz}, micro_num:{micro_num}, algo_type:{algo_type}, wp:{wp}, zp:{zp} ckpt:{activation_ckpt} -------------------",
                                             flush=True,
                                         )
 
@@ -645,7 +645,12 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                        (
+                                            wp_comm_cost,
+                                            sp_comm_cost,
+                                            comp_wp,
+                                            comp_attn,
+                                        ) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
