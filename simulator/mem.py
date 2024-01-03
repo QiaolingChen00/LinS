@@ -77,7 +77,7 @@ def get_msp_memory_threshold(
         * sequence_length
         * hidden_dim
         * (
-            4 + (106 / 3) / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size)
+            12/3 + ((118-12) / 3) / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size)
         )  # TODO: check
     ) * layer_num
     return activation
