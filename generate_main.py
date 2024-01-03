@@ -10,7 +10,8 @@ model_size_list = [7, 13, 30, 65]
 seq_len_list = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
 # model_size_list = [65]
 # seq_len_list = [131072]
-
+mem_threshold = 74 * 1024**3
+mem_threshold_str = mem_threshold//1024**3
 # 生成配置文件并执行命令
 for model_size in model_size_list:
     for seq_len in seq_len_list:
@@ -22,6 +23,7 @@ for model_size in model_size_list:
             template_content.replace("{model_size}", str(model_size))
             .replace("{seq_len}", str(seq_len))
             .replace("{world_size}", str(world_size))
+            .replace("{mem_threshold}", str(mem_threshold))
         )
 
         # 生成配置文件路径
@@ -32,7 +34,7 @@ for model_size in model_size_list:
             config_file.write(config_content)
 
         # 执行命令并提取最后一行结果
-        command = f"python {config_file_path} 2>&1 | tee ./outputs/output_{model_size}_{seq_len}.log"
+        command = f"python {config_file_path} 2>&1 | tee ./outputs/output_{model_size}_{seq_len}_{mem_threshold_str}.log"
         result = subprocess.run(command, shell=True, executable="/bin/bash", capture_output=True, text=True)
         output_lines = result.stdout.splitlines()
         last_line = output_lines[-1]
@@ -41,4 +43,4 @@ for model_size in model_size_list:
         with open(f"./sim_configs/output_{model_size}_{seq_len}.py", "w") as final_output_file:
             final_output_file.write(last_line)
 
-print("配置文件生成和执行完成。")
+        print(f"model_size_{model_size}_seq_len_{seq_len}_mem_threshold_{mem_threshold_str}: last_line: {last_line}", flush=True)

@@ -5,12 +5,13 @@ from simulator.ab_cost_model import allreduce, broadcast, p2p
 from simulator.context import ParallelMode, check_and_modify_parallel_config
 from simulator.context import global_context as gpc
 from simulator.mem import (
+    get_backward_mem_peak,
     get_block_output_mm,
+    get_block_threshold,
     get_embedding_output_mm,
     get_head_input_mm,
     get_head_output_mm,
     get_memory_pool_mm,
-    get_memory_threshold,
     get_norm_output_mm,
     get_p2p_buffer_size,
     get_rotary_emb_sincos_cache_mm,
@@ -53,13 +54,15 @@ class LinsSolutionNoZ3:
         norm_activation,
         head_input_activation,
         head_output_activation,
-        block_activation,
+        block_output_activation,
         wdp_comm_cost,
         all_fwd_bwd_cost,
         g_bsz,
         pp_p2p_buffer,
         rotary_emb_sincos_cache_mm,
         modelsize,
+        backward_mem_peak,
+        blocks_activation,
     ):
         self.pp = pp
         self.sp = sp
@@ -90,7 +93,7 @@ class LinsSolutionNoZ3:
         self.norm_activation = norm_activation
         self.head_input_activation = head_input_activation
         self.head_output_activation = head_output_activation
-        self.block_activation = block_activation
+        self.block_output_activation = block_output_activation
 
         self.wdp_comm_cost = wdp_comm_cost
         self.all_fwd_bwd_cost = all_fwd_bwd_cost
@@ -98,6 +101,8 @@ class LinsSolutionNoZ3:
         self.pp_p2p_buffer = pp_p2p_buffer
         self.rotary_emb_sincos_cache_mm = rotary_emb_sincos_cache_mm
         self.modelsize = modelsize
+        self.backward_mem_peak = backward_mem_peak
+        self.blocks_activation = blocks_activation
 
     def __str__(self):
         return self.__repr__()
@@ -115,9 +120,10 @@ class LinsSolutionNoZ3:
             f" one layer fwd_bwd_cost: {self. fwd_bwd_cost*10**3:.2f} ms, all_layer_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
             f" COMP: comp_wp: {self.comp_wp*10**3:.2f} ms, comp_attn: {self.comp_attn*10**3:.2f} ms, \n"
             f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
-            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB, os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, \n"
-            f" total activation: {self.activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB \n"
-            f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_activation(enable ckpt): {self.block_activation/GB:.2f} GB, pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
+            f" total mem_cost: {self.total_mm_cost /GB:.2f} GB \n"
+            f" Not evictable MEM: os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB,pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
+            f" Activation MEM: total activation: {self.activation/GB:.2f} GB, blocks_activation: {self.blocks_activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB,backward_mem_peak: {self.backward_mem_peak/GB:.2f} GB \n"
+            f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_output_activation(enable ckpt): {self.block_output_activation/GB:.2f} GB \n"
         )
 
 
@@ -558,7 +564,7 @@ class Constraint:
                                     if self.overlap_wdp:
                                         wdp_comm_cost = 0
 
-                                    activation = get_memory_threshold(
+                                    blocks_activation = get_block_threshold(
                                         algo=algo_type,
                                         micro_batch_size=micro_bsz,
                                         layer_num=self._l,  # 显存阈值根据pp0来计算
@@ -571,9 +577,10 @@ class Constraint:
                                         dtype_size=self.dtype_size // 2,  # dtype_size要除以2，因为激活值计算公式是默认按照fp16类型来的
                                     )  # isp激活的话，不需要除以wp，因为需要allgather
 
-                                    isp_mem_pool = 0
                                     if algo_type == AlgoType.ISP:
                                         isp_mem_pool = get_memory_pool_mm(self.mlp_ratio, self._h, self.dtype_size)
+                                    else:
+                                        isp_mem_pool = 0
 
                                     pp_p2p_buffer = (
                                         get_p2p_buffer_size(self.dtype_size, self.seq_len, sp, micro_bsz, self._h)
@@ -600,7 +607,6 @@ class Constraint:
                                         micro_bsz, self.seq_len, self.vocab_size, dtype_size=self.dtype_size
                                     )
                                     rotary_emb_sincos_cache_mm = get_rotary_emb_sincos_cache_mm(
-                                        micro_bsz,
                                         seq_len=self.seq_len,
                                         pp_size=pp,
                                         hidden_dim=self._h,
@@ -609,27 +615,33 @@ class Constraint:
                                         dtype_size=self.dtype_size,
                                     )
                                     # 对于pp0,占用的激活仍然是 layer_num 份
-                                    block_activation = (
+                                    block_output_activation = (
                                         pp_num_layers
                                         * pp
                                         * get_block_output_mm(
                                             micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
                                         )
                                     ) * activation_ckpt  # 只有开启重计算才需要额外加上这部分block激活的输出
+                                    backward_mem_peak = get_backward_mem_peak(
+                                        seq_len=self.seq_len,
+                                        micro_bsz=micro_bsz,
+                                        dtype_size=self.dtype_size,
+                                        vocab_size=self.vocab_size,
+                                        tp_size=sp,
+                                        hidden_size=self._h,
+                                    )
                                     activation = (
-                                        activation
+                                        blocks_activation
                                         + embedding_activation
                                         + norm_activation
                                         + head_input_activation
                                         + head_output_activation
-                                        + block_activation
-                                        + isp_mem_pool
-                                        + pp_p2p_buffer
-                                        + rotary_emb_sincos_cache_mm
+                                        + block_output_activation
+                                        + backward_mem_peak
                                     )
 
                                     # 总显存开销
-                                    mem_cost1 = p_g_mm_cost + os_mm_cost + activation  # fwd_bwd显存峰值(需要加上Grad吗？)
+                                    mem_cost1 = p_g_mm_cost + os_mm_cost + activation + isp_mem_pool + rotary_emb_sincos_cache_mm + pp_p2p_buffer # fwd_bwd显存峰值(需要加上Grad吗？)
                                     mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
                                     mem_cost = max(mem_cost1, mem_cost2)
                                     if mem_cost > self.mem_threshold:
@@ -645,12 +657,7 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (
-                                            wp_comm_cost,
-                                            sp_comm_cost,
-                                            comp_wp,
-                                            comp_attn,
-                                        ) = TransformerOverlapOneLayer(
+                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
@@ -730,13 +737,15 @@ class Constraint:
                                         norm_activation=norm_activation,
                                         head_input_activation=head_input_activation,
                                         head_output_activation=head_output_activation,
-                                        block_activation=block_activation,
+                                        block_output_activation=block_output_activation,
                                         wdp_comm_cost=wdp_comm_cost,
                                         all_fwd_bwd_cost=all_fwd_bwd_cost,
                                         g_bsz=now_global_bsz,
                                         pp_p2p_buffer=pp_p2p_buffer,
                                         rotary_emb_sincos_cache_mm=rotary_emb_sincos_cache_mm,
                                         modelsize=self._param_elements / 10**9,
+                                        backward_mem_peak=backward_mem_peak,
+                                        blocks_activation=blocks_activation,
                                     )
 
                                     cost = tgs

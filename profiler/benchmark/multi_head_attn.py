@@ -2,7 +2,6 @@
 # -*- encoding: utf-8 -*-
 
 import math
-import warnings
 
 import torch
 from einops import rearrange
@@ -88,7 +87,16 @@ class UnitMultiHeadAttn(UnitBench):
         oom = False
         if mem_used > 75 * 1024**3:
             oom = True
-        if self.packed_length >= 256 * K:  # and self.embed_dim / self.tp_size >= 6144:
+
+        # 约束1: seqlen最大不能超过256K(不含)
+        # 约束2: embed_dim在被tp切过之后若大于6144， 则packed_length不能大于256k
+        if self.packed_length >= 256 * K and (self.embed_dim / self.tp_size) >= 6144:
+            oom = True
+        if self.seq_len >= 256 * K and self.micro_bsz > 1:
+            oom = True
+        if self.packed_length >= 524288 and (self.embed_dim / self.tp_size) >= 3072:
+            oom = True
+        if self.packed_length >= 1048576 and (self.embed_dim / self.tp_size) >= 2048:
             oom = True
 
         if oom:

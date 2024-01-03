@@ -29,7 +29,7 @@ def main():
             "use_fa": 1,
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
-            "mem_threshold": 70 * 1024**3,
+            "mem_threshold": {mem_threshold},
             "wp_penalty_coefficient": 1.2,
         }
     )
