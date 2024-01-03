@@ -34,7 +34,7 @@ def get_isp_memory_threshold(
     # rank0相当于还是L份layer的激活
 
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
     """ (0) dropout input: 2bsh
         (1) attention: 2bsh (qkv input) + 3*2bsh(attn input) + 2bsh(attn_out_padded) + 2bsh(out project input)-> 12bsh
@@ -69,7 +69,7 @@ def get_msp_memory_threshold(
     sp_size: int,
 ):
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
     activation = (
         dtype_size
@@ -77,7 +77,7 @@ def get_msp_memory_threshold(
         * sequence_length
         * hidden_dim
         * (
-            12/3 + ((118-12) / 3) / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size)
+            12 / 3 + ((118 - 12) / 3) / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size)
         )  # TODO: check
     ) * layer_num
     return activation
@@ -95,7 +95,7 @@ def get_fsp_memory_threshold(
     sp_size: int,
 ):
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
     activation = (
         dtype_size
@@ -160,21 +160,25 @@ def get_head_output_mm(micro_bsz, seq_len, vocab_size, dtype_size):
     # [seq_len, vocab_size]
     return micro_bsz * dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
+
 # head input
-def get_head_input_mm(micro_bsz, seq_len, hidden_dim, dtype_size):
+def get_head_input_mm(micro_bsz, seq_len, hidden_dim, dtype_size, tp_size, algo):
     # [seq_len, vocab_size]
-    return micro_bsz * dtype_size * seq_len * hidden_dim
+    if algo in [AlgoType.ISP, AlgoType.FSP]:
+        return micro_bsz * dtype_size * seq_len * hidden_dim // tp_size
+    else:
+        return 0
 
 
 # rotary embedding sin/cos cache
 def get_rotary_emb_sincos_cache_mm(seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
-    # 需要乘以 micro_bsz 吗？
     # [sin,cos] * dtype_size * pp切后的layer_nums * 不切的seq_len * head_dim // 2
     return 2 * dtype_size * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
 
 
 def get_backward_mem_peak(seq_len, micro_bsz, dtype_size, vocab_size, tp_size, hidden_size):
-    head_input_grad = dtype_size * seq_len * micro_bsz * hidden_size  # 512 MB
+    # 这个函数是峰值位置
+    head_input_grad = 2 * dtype_size * seq_len * micro_bsz * hidden_size  # 512 MB (1份激活1份激活的梯度)
     reduce_scatter_grad = head_input_grad / tp_size  # 512 MB / 8
     head_weight_grad = dtype_size * hidden_size * vocab_size / tp_size  #  100.b MB
     return head_input_grad + reduce_scatter_grad + head_weight_grad

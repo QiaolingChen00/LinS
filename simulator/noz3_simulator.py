@@ -8,7 +8,6 @@ from simulator.mem import (
     get_backward_mem_peak,
     get_block_output_mm,
     get_block_threshold,
-    get_embedding_output_mm,
     get_head_input_mm,
     get_head_output_mm,
     get_memory_pool_mm,
@@ -50,7 +49,6 @@ class LinsSolutionNoZ3:
         activation_ckpt,
         tgs,
         mem_pool_mm,
-        embedding_activation,
         norm_activation,
         head_input_activation,
         head_output_activation,
@@ -89,7 +87,6 @@ class LinsSolutionNoZ3:
         self.tgs = tgs
 
         self.mem_pool_mm = mem_pool_mm
-        self.embedding_activation = embedding_activation
         self.norm_activation = norm_activation
         self.head_input_activation = head_input_activation
         self.head_output_activation = head_output_activation
@@ -122,7 +119,7 @@ class LinsSolutionNoZ3:
             f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB \n"
             f" Not evictable MEM: os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB,pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
-            f" Activation MEM: total activation: {self.activation/GB:.2f} GB, blocks_activation: {self.blocks_activation/GB:.2f} GB, embedding_activation: {self.embedding_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB,backward_mem_peak: {self.backward_mem_peak/GB:.2f} GB \n"
+            f" Activation MEM: total activation: {self.activation/GB:.2f} GB, blocks_activation: {self.blocks_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB,backward_mem_peak: {self.backward_mem_peak/GB:.2f} GB \n"
             f" head_input_activation: {self.head_input_activation/GB:.2f} GB, head_output_activation: {self.head_output_activation/GB:.2f} GB, block_output_activation(enable ckpt): {self.block_output_activation/GB:.2f} GB \n"
         )
 
@@ -389,19 +386,25 @@ class Constraint:
                 parts[p].append((st, base_idx))
 
         indexes = []
-        indexes_pp0 = []
+        indexes_split = []
+        max_layers = 0
         for pp_rank, _parts in enumerate(parts):
+            indexes_split.append([])
             for s, e in _parts:
                 indexes.extend(list(range(s, e)))
-                if pp_rank == 0:
-                    indexes_pp0.extend(list(range(s, e)))
+                indexes_split[pp_rank].extend(list(range(s, e)))
+            if len(indexes_split[pp_rank]) > max_layers:
+                max_layers = len(indexes_split[pp_rank])
+
         assert num_chunks == 1, "not support num_chunks > 1!"
         assert len(indexes) == len(set(indexes)), indexes  # should have no duplicates
         assert set(indexes) == set(list(range(num_layers))), (
             indexes,
             num_layers,
         )  # should have the same indexes as expected
-        return len(indexes_pp0)  # 我们只要知道 pp rank0 被分到了多少个 layer
+        # 我们需要知道 pp rank0 被分到了多少个 layer
+        # 以及被分到最多layer的pprank被分到了多少层.
+        return len(indexes_split[0]), max_layers
 
     def run_flexible_worldsize_loop(self):
         max_node_num = self.max_world_size // 8
@@ -452,11 +455,11 @@ class Constraint:
         C = copy.deepcopy(A)
 
         for pp_i, pp in enumerate(pp_search_range):
-            pp_num_layers = self.partition_uniform(num_layers=self._l, pipeline_parallel_size=pp, num_chunks=1)
-            print(f"pp_num_layers: {pp_num_layers}, pp:{pp}", flush=True)
-            one_layer_elem = cal_block_p_elem(self._h, multiple_of=self.multiple_of, mlp_ratio=self.mlp_ratio)
+            pp_num_layers, max_pp_num_layers = self.partition_uniform(
+                num_layers=self._l, pipeline_parallel_size=pp, num_chunks=1
+            )
+            print(f"pp_num_layers: {pp_num_layers}, pp_num_layers:{max_pp_num_layers}, pp:{pp}", flush=True)
             embedding_elem = self.vocab_size * self._h
-            pp_blocks_elem = pp_num_layers * one_layer_elem
 
             for sp_i, sp in enumerate(sp_search_range):
                 if not self.use_fixed_micro_bsz:
@@ -533,6 +536,10 @@ class Constraint:
                                     )
 
                                     dp = gpc.get_world_size(ParallelMode.DATA)
+                                    one_layer_elem = cal_block_p_elem(
+                                        self._h, multiple_of=self.multiple_of, mlp_ratio=self.mlp_ratio
+                                    )
+                                    pp_blocks_elem = pp_num_layers * one_layer_elem
                                     embedding_dp_shared_range = 1 if dp <= 1 else 2
                                     head_num = 1 if pp > 1 else 2
                                     if algo_type in [AlgoType.MSP, AlgoType.FSP]:
@@ -589,19 +596,16 @@ class Constraint:
                                     )
 
                                     # 下面这些激活的计算不受到重计算的影响
-                                    embedding_activation = get_embedding_output_mm(
-                                        micro_bsz,
-                                        self.seq_len,
-                                        self._h,
-                                        sp=sp,
-                                        algo=algo_type,
-                                        dtype_size=self.dtype_size,
-                                    )
                                     norm_activation = get_norm_output_mm(
                                         micro_bsz, self.seq_len, self._h, sp=sp, dtype_size=self.dtype_size
                                     )
                                     head_input_activation = get_head_input_mm(
-                                        micro_bsz, self.seq_len, self._h, dtype_size=self.dtype_size
+                                        micro_bsz,
+                                        self.seq_len,
+                                        self._h,
+                                        dtype_size=self.dtype_size,
+                                        tp_size=sp,
+                                        algo=algo_type,
                                     )
                                     head_output_activation = get_head_output_mm(
                                         micro_bsz, self.seq_len, self.vocab_size, dtype_size=self.dtype_size
@@ -632,7 +636,6 @@ class Constraint:
                                     )
                                     activation = (
                                         blocks_activation
-                                        + embedding_activation
                                         + norm_activation
                                         + head_input_activation
                                         + head_output_activation
@@ -641,7 +644,14 @@ class Constraint:
                                     )
 
                                     # 总显存开销
-                                    mem_cost1 = p_g_mm_cost + os_mm_cost + activation + isp_mem_pool + rotary_emb_sincos_cache_mm + pp_p2p_buffer # fwd_bwd显存峰值(需要加上Grad吗？)
+                                    mem_cost1 = (
+                                        p_g_mm_cost
+                                        + os_mm_cost
+                                        + activation
+                                        + isp_mem_pool
+                                        + rotary_emb_sincos_cache_mm
+                                        + pp_p2p_buffer
+                                    )  # fwd_bwd显存峰值(需要加上Grad吗？)
                                     mem_cost2 = p_g_mm_cost + os_mm_cost / 3 * 5  # adamw的显存峰值
                                     mem_cost = max(mem_cost1, mem_cost2)
                                     if mem_cost > self.mem_threshold:
@@ -678,7 +688,11 @@ class Constraint:
                                     def overlaped_fwd_bwd_cost():
                                         # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
                                         return (
-                                            max(wp_comm_cost * self._wp_penalty_coefficient, comp_wp)
+                                            max(
+                                                wp_comm_cost
+                                                * (self._wp_penalty_coefficient if self.model_size < 30 else 1),
+                                                comp_wp,
+                                            )
                                             + sp_comm_cost
                                             + comp_attn
                                         )
@@ -689,8 +703,9 @@ class Constraint:
                                         all_fwd_bwd_cost = grad_acc * fwd_bwd_cost  # 算上梯度累积的fwdbwd开销
                                         pp_comm_cost = 0
                                     else:
+                                        # 注意这里要使用 max_pp_num_layers 来计算pp的延迟，而不是pp0的 num layer
                                         fwd_bwd_cost = (
-                                            pp_num_layers * overlaped_fwd_bwd_cost()
+                                            max_pp_num_layers * overlaped_fwd_bwd_cost()
                                         )  # 1个pp micro step的fwd_bwd开销
                                         all_fwd_bwd_cost = micro_num * fwd_bwd_cost  # pp的idea开销(不含bubble)
                                         pp_p2p_cost = self.pp_comm_overhead(
@@ -733,7 +748,6 @@ class Constraint:
                                         activation_ckpt=activation_ckpt,
                                         tgs=tgs,
                                         mem_pool_mm=isp_mem_pool,
-                                        embedding_activation=embedding_activation,
                                         norm_activation=norm_activation,
                                         head_input_activation=head_input_activation,
                                         head_output_activation=head_output_activation,
