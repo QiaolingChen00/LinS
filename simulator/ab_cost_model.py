@@ -9,7 +9,12 @@ scale_ratio = [1.415134488, 1.208864145, 1.1, 1]
 
 def coll_algo_bw(comm_op, size, n):
     if comm_op == CostType.ALL2ALL:
-        return size * (n - 1) / n
+        if n <= 8:
+            return size * (n - 1) / n
+        else:
+            # intra_parts = 8
+            one_part = size / n
+            return 8 * one_part * (n - 8 / n)
     elif comm_op == CostType.ALLREDUCE:
         return size * 2 * (n - 1) / n
     elif comm_op == CostType.REDUCESCATTER:
@@ -18,6 +23,23 @@ def coll_algo_bw(comm_op, size, n):
         return size * (n - 1) / n
     elif comm_op == CostType.BROADCAST:
         return size * (n - 1) / n
+    elif comm_op == CostType.P2P:
+        return size
+
+    raise ValueError(f"unkonw comm_op: {comm_op}")
+
+
+def coll_bus_bw(comm_op, size, n):
+    if comm_op == CostType.ALL2ALL:
+        return size
+    elif comm_op == CostType.ALLREDUCE:
+        return size * 2
+    elif comm_op == CostType.REDUCESCATTER:
+        return size
+    elif comm_op == CostType.ALLGATHER:
+        return size
+    elif comm_op == CostType.BROADCAST:
+        return size
     elif comm_op == CostType.P2P:
         return size
 
@@ -53,15 +75,18 @@ def get_comm_cost(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostTy
 
     if parallel_mode == ParallelMode.PIPELINE:
         scale = 2
+
     if scale <= 1:
         return 0
 
     is_intra = gpc.check_pg_is_intra(parallel_mode)
     if not is_intra:
         num_partner = gpc.same_group_in_one_node(parallel_mode)
-        # if parallel_mode == ParallelMode.ZERO1:
-        #     assert num_partner == 1
         assert num_partner <= 8, f"num_partner: {num_partner}"
+        if parallel_mode == ParallelMode.WEIGHT:
+            assert num_partner == 1
+        if parallel_mode == ParallelMode.TENSOR:
+            assert num_partner == 1
         comm_volume *= num_partner
 
     bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))

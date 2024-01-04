@@ -228,7 +228,7 @@ def my_compare(a, b):
 
 
 class GenCostModel:
-    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None) -> None:
+    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None, dump=True) -> None:
         self._master = is_master
         self._profile_args = Config(
             {
@@ -240,6 +240,8 @@ class GenCostModel:
         self._data_prefix = "./data"
         self.cost_kv_data = {}
         self.build_cost_model_by_key_value(build_type_list)
+        if dump:
+            self.dump_data()
 
     def _log(self, msg: str):
         if self._master:
@@ -250,10 +252,12 @@ class GenCostModel:
             self.cost_data = OrderedDict()
             for bench_type in build_type_list:
                 self._log(f"now test {bench_type}")
-                re_results = run_profile(self._profile_args, bench_type)
-                # re_results = GenCostModel.reformat_data_to_cost_model(re_results)
-                with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
-                    pickle.dump(re_results, f)
+                self.cost_kv_data[bench_type] = run_profile(self._profile_args, bench_type)
+
+    def dump_data(self):
+        for bench_type, results in self.cost_kv_data.items():
+            with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
+                pickle.dump(results, f)
 
 
 cost_model = None

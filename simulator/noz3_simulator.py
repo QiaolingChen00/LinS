@@ -104,19 +104,20 @@ class LinsSolutionNoZ3:
     def __str__(self):
         return self.__repr__()
 
+    # Begin: world_size: 128, pp:1, sp:16, micro_bsz:1, micro_num:2, algo_type:isp, wp:16, zp:4 ckpt:1
     def __repr__(self):
         return (
             f" world_size: {self.world_size}"
-            f" tgs: {self.tgs * -1}"
+            f" tgs: {self.tgs}"
             f" global bsz: {self.g_bsz} \n"
             f" activation ckpt: {self.activation_ckpt}"
             f" seq_len: {self.seq_len}"
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}, \n"
             f" modelsize: {self.modelsize}, algo_type: {self.algo_type}, pp_size: {self.pp}, sp_size: {self.sp}, wp_size: {self.wp_size}, zp_size: {self.zp_size}, \n"
-            f" one layer fwd_bwd_cost: {self. fwd_bwd_cost*10**3:.2f} ms, all_layer_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
+            f" one micro step fwd_bwd_cost: {self.fwd_bwd_cost*10**3:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
             f" COMP: comp_wp: {self.comp_wp*10**3:.2f} ms, comp_attn: {self.comp_attn*10**3:.2f} ms, \n"
-            f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
+            f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, one layer wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, one layer sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB \n"
             f" Not evictable MEM: os_mm_cost: {self.os_mm_cost/GB:.2f} GB, p_g_mm_cost: {self.p_g_mm_cost/GB:.2f} GB, isp_mem_pool: {self.mem_pool_mm/GB:.2f} GB, sincos_cache_mm: {self.rotary_emb_sincos_cache_mm/GB:.2f} GB,pp_p2p_buffer: {self.pp_p2p_buffer/GB:.2f} GB\n"
             f" Activation MEM: total activation: {self.activation/GB:.2f} GB, blocks_activation: {self.blocks_activation/GB:.2f} GB, norm_activation: {self.norm_activation/GB:.2f} GB,backward_mem_peak: {self.backward_mem_peak/GB:.2f} GB \n"
@@ -413,16 +414,24 @@ class Constraint:
             # TODO: 增加静态显存check,如果低于最低卡数要求直接break
             # print(f"node_num : {node_num}")
             world_size = node_num * 8
-            self.run_loop(world_size)
+            solutions_list = self.run_loop(world_size)
 
         if self.min_cost_solution is not None:
+            solutions_list = sorted(solutions_list, key=lambda solu: solu.tgs, reverse=True)
             print("--------------------- END -----------------------", flush=True)
-            print("Max TGS:", self.min_comm_cost * (-(10**4)))
-            print("Solution:", self.min_cost_solution, flush=True)
+            print("Max TGS:", self.min_comm_cost * -1)
+            for i, solu in enumerate(solutions_list):
+                if i > 5:
+                    break
+                print(f"Top{i} Solution:", solu, flush=True)
+
+            print("--------------------- MSP best solution -----------------------", flush=True)
             if self.msp_min_solu is not None:
                 print(f"self.msp_min_solu : {self.msp_min_solu}")
+            print("--------------------- FSP best solution -----------------------", flush=True)
             if self.fsp_min_solu is not None:
                 print(f"self.fsp_min_solu : {self.fsp_min_solu}")
+            print("--------------------- ISP best solution -----------------------", flush=True)
             if self.isp_min_solu is not None:
                 print(f"self.isp_min_solu : {self.isp_min_solu}")
 
@@ -446,6 +455,7 @@ class Constraint:
         sp_search_range = SPIter(world_size, self._a)
         wp_search_ranges = SPIter(world_size, world_size)
         # zp_search_ranges_max = SPIter(world_size, world_size)
+        solutions_list = []
 
         A = [
             [[[0 for _ in range(world_size)] for _ in wp_search_ranges] for _ in sp_search_range]
@@ -746,7 +756,7 @@ class Constraint:
                                         comp_attn=comp_attn,
                                         world_size=world_size,
                                         activation_ckpt=activation_ckpt,
-                                        tgs=tgs,
+                                        tgs=-1 * tgs,
                                         mem_pool_mm=isp_mem_pool,
                                         norm_activation=norm_activation,
                                         head_input_activation=head_input_activation,
@@ -763,6 +773,7 @@ class Constraint:
                                     )
 
                                     cost = tgs
+                                    solutions_list.append(solu)
                                     if cost < self.min_comm_cost:
                                         self.min_comm_cost = cost
                                         self.min_cost_solution = solu
@@ -783,3 +794,4 @@ class Constraint:
                                             self.isp_min_solu = solu
 
                                     gpc.destroy()  # 销毁device mesh
+        return solutions_list

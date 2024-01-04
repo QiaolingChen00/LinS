@@ -490,17 +490,16 @@ class ParallelContext:
         Returns:
             int: 一个节点内相同类型的PG的数量
         """
-        # pg_group_ranks = self.get_ranks_in_group(parallel_mode)
-        # same_node_rank_nums = 0
-        # for g_rank in pg_group_ranks:
-        #     if g_rank / 8 == 0:
-        #         same_node_rank_nums += 1
         pg_group_ranks = self.get_ranks_in_group(parallel_mode)
-        same_node_rank_nums = 0
-        for g_rank in pg_group_ranks:
-            if g_rank < 8:
-                same_node_rank_nums += 1
-        return 1 if same_node_rank_nums == 0 else same_node_rank_nums
+        pg_group_ranks = sorted(pg_group_ranks)
+        if len(pg_group_ranks) == 1:
+            return 1
+        else:
+            stride = pg_group_ranks[1] - pg_group_ranks[0]
+            if stride >= 8:
+                return 8
+            else:
+                return stride
 
 
 global_context = ParallelContext()
