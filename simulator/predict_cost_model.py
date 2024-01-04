@@ -20,7 +20,7 @@ from utils.config import Config
 
 
 class PolynomialModel:
-    def __init__(self, degree, data, name="unkonw", segments=None) -> None:
+    def __init__(self, degree, data, name="unknown", segments=None) -> None:
         """_summary_
 
         Args:

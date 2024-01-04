@@ -324,7 +324,7 @@ class Constraint:
             # 同步参数
             block_zp_latency = zp * broadcast(self.dtype_size * pp_blocks_elem / zp, ParallelMode.ZERO1)
             embedding_zp_latency = broadcast(self.dtype_size * embedding_elem, ParallelMode.DATA)
-            zp_latency = block_zp_latency + embedding_zp_latency
+            zp_latency = max(block_zp_latency, embedding_zp_latency)
 
         return zp_latency, wdp_latency
 
@@ -677,7 +677,12 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
+                                        (
+                                            wp_comm_cost,
+                                            sp_comm_cost,
+                                            comp_wp,
+                                            comp_attn,
+                                        ) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,

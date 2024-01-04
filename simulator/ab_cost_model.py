@@ -26,7 +26,7 @@ def coll_algo_bw(comm_op, size, n):
     elif comm_op == CostType.P2P:
         return size
 
-    raise ValueError(f"unkonw comm_op: {comm_op}")
+    raise ValueError(f"unknown comm_op: {comm_op}")
 
 
 def coll_bus_bw(comm_op, size, n):
@@ -43,7 +43,7 @@ def coll_bus_bw(comm_op, size, n):
     elif comm_op == CostType.P2P:
         return size
 
-    raise ValueError(f"unkonw comm_op: {comm_op}")
+    raise ValueError(f"unknown comm_op: {comm_op}")
 
 
 def get_scale_ratio(scale):
