@@ -2,7 +2,6 @@
 # -*- encoding: utf-8 -*-
 
 import math
-import warnings
 
 import torch
 from einops import rearrange
@@ -46,6 +45,15 @@ class UnitMultiHeadAttn(UnitBench):
         "tp_size": [1, 2, 4, 8, 16, 32, 64],
     }
 
+    # test_loop = {
+    #     "seq_len": [8 * K],
+    #     "num_heads_and_hidden_dim": [(40, 5120)],  #
+    #     # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
+    #     "dtype": [torch.bfloat16],
+    #     "micro_bsz": [1, 2],
+    #     "tp_size": [2],
+    # }
+
     def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size) -> None:
         num_heads, embed_dim = num_heads_and_hidden_dim
         self.tp_size = tp_size
@@ -69,8 +77,8 @@ class UnitMultiHeadAttn(UnitBench):
         self.device = f"cuda:{get_local_rank()}"
 
         indexs, cu_seqlens = [], [0]
-        cu_seqlens = [0, self.packed_length]
-        indexs = list(range(self.packed_length))
+        cu_seqlens = [i * self.seq_len for i in range(self.micro_bsz + 1)]
+        indexs = list(range(self.seq_len)) * self.micro_bsz
 
         weights_mem_used = self.packed_length * 3 * self.embed_dim * self.dtype_size
         attn_activation = 11 * self.packed_length * self.embed_dim
@@ -79,9 +87,16 @@ class UnitMultiHeadAttn(UnitBench):
         oom = False
         if mem_used > 75 * 1024**3:
             oom = True
-        if self.seq_len == 256 * K and self.embed_dim / self.tp_size >= 6144:
+
+        # 约束1: seqlen最大不能超过256K(不含)
+        # 约束2: embed_dim在被tp切过之后若大于6144， 则packed_length不能大于256k
+        if self.packed_length >= 256 * K and (self.embed_dim / self.tp_size) >= 6144:
             oom = True
-        if self.seq_len == 256 * K and micro_bsz > 1:
+        if self.seq_len >= 256 * K and self.micro_bsz > 1:
+            oom = True
+        if self.packed_length >= 524288 and (self.embed_dim / self.tp_size) >= 3072:
+            oom = True
+        if self.packed_length >= 1048576 and (self.embed_dim / self.tp_size) >= 2048:
             oom = True
 
         if oom:

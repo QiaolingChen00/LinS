@@ -75,7 +75,6 @@ class TransformerCommunication:
         qkv_wp_volume = 3 * self.dtype_size * self.h**2
         wo_wp_volume = self.dtype_size * self.h**2
         mlp_w1_volume = self.dtype_size * self.h * self.mlp_hidden_size
-        mlp_w2_volume = mlp_w1_volume
 
         qkv_latency = 2 * allgather(qkv_wp_volume, ParallelMode.WEIGHT) + reducescatter(
             qkv_wp_volume, ParallelMode.WEIGHT
@@ -85,12 +84,13 @@ class TransformerCommunication:
             mlp_w1_volume, ParallelMode.WEIGHT
         )
         mlp_w2_latency = mlp_w1_latency
+        mlp_w3_latency = mlp_w1_latency
 
         # sp communication
         all2all_volume = self.s / self.sp_scale * self.b * self.h * self.dtype_size
         all2all_latency = alltoall(all2all_volume, ParallelMode.TENSOR)
 
-        wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency
+        wp_comm_latency = qkv_latency + wo_latency + mlp_w1_latency + mlp_w2_latency + mlp_w3_latency
         sp_comm_latency = 4 * all2all_latency * (self.ckpt + 1) + 4 * all2all_latency  # forward + backward
 
         # wdp communication

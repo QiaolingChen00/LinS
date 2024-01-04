@@ -33,6 +33,10 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
         tp_size=sp_tp,
     )
     # import pdb; pdb.set_trace()
+    print(
+        f"WGT: predict:{predict}, micro_bsz:{micro_bsz}, seq_len:{seq_len}, head_dim:{head_dim}, num_heads:{num_heads}, sp_tp:{sp_tp}",
+        flush=True,
+    )
 
     return predict
 
@@ -118,7 +122,13 @@ class TransformerComputation:
         w2_volumn = self.dtype_size * self.b * self.s * self.h * self.mlp_hidden_size / self.sp_scale
         w2_latency = get_linear_cost(w2_volumn)
 
-        total_latency = qkv_latency + wo_latency + w1_latency + w2_latency
+        # mlp w3
+        # ISP: (b, s/sp, mlp_h) * (mlp_h, h)
+        # MSP or FSP: (b, s, mlp_h/sp) * (mlp_h/sp, h)
+        w3_volumn = self.dtype_size * self.b * self.s * self.h * self.mlp_hidden_size / self.sp_scale
+        w3_latency = get_linear_cost(w3_volumn)
+
+        total_latency = qkv_latency + wo_latency + w1_latency + w2_latency + w3_latency
 
         return total_latency
 

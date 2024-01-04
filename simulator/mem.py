@@ -32,27 +32,26 @@ def get_isp_memory_threshold(
     # TODO: ht mark pp情况下，rank0的激活值会累积pp个micro_bsz，所以这里是不是还得再乘一个pp_size？
     # TODO: wgt mark 应该不需要，每个pp拿到L/pp个layer，又最多保存pp个micro_num的激活，
     # rank0相当于还是L份layer的激活
+
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
-    """
-        (1) attention: 11*bsh
-        (4) Dropout mask: bsh
-        (5) MLP: 2 * (1 + 8/3 + 8/3 + 8/3)* bsh = 18 * bsh
-                w1_o = self.w1(x)
-                w2_o = self.w2(x)
-                w3_in = Silu(w1_o, w2_o)
-                out = self.w3(w3_in)
-        (6) layer norm(norm的输入需要转成fp32): 2*4*bsh
-
-        total: 11bsh + bsh + 18bsh + 8bsh = 38bsh
+    """ (0) dropout input: 2bsh
+        (1) attention: 2bsh (qkv input) + 3*2bsh(attn input) + 2bsh(attn_out_padded) + 2bsh(out project input)-> 12bsh
+        (2) dropout input: 2bsh
+        (3) MLP: 2 * (1 + 8/3 + 8/3 + 8/3 +8/3)* bsh =  70 * bsh / 3
+                w1_o = self.w1(x)   #  8/3
+                w2_o = self.w2(x)   #  8/3
+                w3_in = Silu(w1_o, w2_o) #  8/3 + 8/3
+                out = self.w3(w3_in) #  8/3
+        total: 16bsh + 70 * bsh / 3 = 118 * bsh /3
     """
     activation = (
         dtype_size
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (38 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        * (118 / 3 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
         / sp_size
     ) * layer_num
     return activation
@@ -70,14 +69,16 @@ def get_msp_memory_threshold(
     sp_size: int,
 ):
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
     activation = (
         dtype_size
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (4 + 34 / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size))  # TODO: check
+        * (
+            12 / 3 + ((118 - 12) / 3) / sp_size + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim / sp_size)
+        )  # TODO: check
     ) * layer_num
     return activation
 
@@ -94,14 +95,14 @@ def get_fsp_memory_threshold(
     sp_size: int,
 ):
     if activation_ckpt:
-        layer_num = 1
+        layer_num = 0
 
     activation = (
         dtype_size
         * micro_batch_size
         * sequence_length
         * hidden_dim
-        * (38 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
+        * (118 / 3 + (1 - use_fa) * (5 * head_num * sequence_length / hidden_dim))
         / sp_size
     ) * layer_num  # 显存阈值根据pp0来计算，需要micro_num >= pp，stage_0需要保存 pp 份才成立
     return activation
@@ -160,16 +161,27 @@ def get_head_output_mm(micro_bsz, seq_len, vocab_size, dtype_size):
     return micro_bsz * dtype_size * seq_len * vocab_size // gpc.get_world_size(ParallelMode.TENSOR)
 
 
-# head output
-def get_head_input_mm(micro_bsz, seq_len, hidden_dim, dtype_size):
+# head input
+def get_head_input_mm(micro_bsz, seq_len, hidden_dim, dtype_size, tp_size, algo):
     # [seq_len, vocab_size]
-    return micro_bsz * dtype_size * seq_len * hidden_dim
+    if algo in [AlgoType.ISP, AlgoType.FSP]:
+        return micro_bsz * dtype_size * seq_len * hidden_dim // tp_size
+    else:
+        return 0
 
 
 # rotary embedding sin/cos cache
-def get_rotary_emb_sincos_cache_mm(micro_bsz, seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
+def get_rotary_emb_sincos_cache_mm(seq_len, pp_size, hidden_dim, head_nums, layer_nums, dtype_size):
     # [sin,cos] * dtype_size * pp切后的layer_nums * 不切的seq_len * head_dim // 2
-    return 2 * dtype_size * micro_bsz * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
+    return 2 * dtype_size * (layer_nums // pp_size) * seq_len * (hidden_dim // head_nums) // 2
+
+
+def get_backward_mem_peak(seq_len, micro_bsz, dtype_size, vocab_size, tp_size, hidden_size):
+    # 这个函数是峰值位置
+    head_input_grad = 2 * dtype_size * seq_len * micro_bsz * hidden_size  # 512 MB (1份激活1份激活的梯度)
+    reduce_scatter_grad = head_input_grad / tp_size  # 512 MB / 8
+    head_weight_grad = dtype_size * hidden_size * vocab_size / tp_size  #  100.b MB
+    return head_input_grad + reduce_scatter_grad + head_weight_grad
 
 
 def get_memory_pool_mm(mlp_ratio, hidden_size, dtype_size):
@@ -189,11 +201,11 @@ def get_p2p_buffer_size(dtype_size, seq_len, sp_size, micro_bsz, hidden_dim):
     return dtype_size * (seq_len // sp_size) * micro_bsz * hidden_dim
 
 
-def get_memory_threshold(
+def get_block_threshold(
     algo: AlgoType,
     **kwargs,
 ):
-    """get_memory_threshold 获得一层激活的显存占用
+    """get_block_threshold 获得一层激活的显存占用
     注意:
     (1) seqlen一定是没有被sp切过的
     (2) 公式是基于fp16计算的, 所以传入的 dtype_size 要除以2

@@ -52,6 +52,26 @@ _100GB = 100 * GB
 OUT_OF_MEM_LATENCY = 10**9
 
 
+def cal_block_p_elem(h, multiple_of, mlp_ratio):
+    norm1_p_elem = h
+    norm2_p_elem = h
+    MHA = h * 3 * h
+    out_proj = h * h
+    mlp_hidden_features = multiple_of * ((int(h * mlp_ratio) + multiple_of - 1) // multiple_of)
+    mlp_p_elem = (h * mlp_hidden_features) * 3
+    dropout1 = 0
+    dropout2 = 0
+    return norm1_p_elem + norm2_p_elem + MHA + out_proj + mlp_p_elem + dropout1 + dropout2
+
+
+def cal_model_p_elem(h, l, vocab_size, multiple_of, mlp_ratio):
+    embedding_p_elem = vocab_size * h
+    block_p_elem = l * cal_block_p_elem(h, multiple_of, mlp_ratio)
+    norm_p_elem = h
+    head_p_elem = vocab_size * h
+    return embedding_p_elem + block_p_elem + norm_p_elem + head_p_elem
+
+
 def get_model_config(model_size):
     if model_size == 7:
         h = 4096
@@ -76,10 +96,13 @@ def get_model_config(model_size):
     else:
         raise ValueError(f"unsupport modesize: {model_size}")
 
+    vocab_size = 103168
     mlp_ratio = 8 / 3
     multiple_of = 256
 
-    return h, a, l, mlp_ratio, multiple_of
+    model_p_elem = cal_model_p_elem(h=h, l=l, vocab_size=vocab_size, multiple_of=multiple_of, mlp_ratio=mlp_ratio)
+
+    return h, a, l, mlp_ratio, multiple_of, model_p_elem
 
 
 def pretty_print_size(x):
@@ -164,7 +187,6 @@ def env2int(env_list, default=-1):
 
 def init_torch_distributed(backend):
     global dist
-    import torch.distributed as dist
 
     # discover rank/size info from env
     if "MASTER_PORT" not in os.environ:
