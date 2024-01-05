@@ -11,7 +11,7 @@ class CostType:
     ALL2ALL = "all2all"
     ALLREDUCE = "all_reduce"
     REDUCESCATTER = "reduce_scatter"
-    ALLGATHER = "all_gahter"
+    ALLGATHER = "all_gather"
     LINEAR = "linear"
     BROADCAST = "broadcast"
     P2P = "p2p"
@@ -33,7 +33,6 @@ class BW:
 
 
 BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
-
 # BENCH_TYPE_LIST = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.LINEAR]
 
 K = 1024
@@ -48,6 +47,10 @@ US = 1000 * MS
 _75GB = 75 * GB
 _100GB = 100 * GB
 
+GLOBAL_BYTE_SIZES_LIST = [512 * KB, 1 * MB, 4 * MB, 64 * MB, 128 * MB, 256 * MB, 512 * MB, 1 * GB, 2 * GB, 4 * GB]
+# GLOBAL_BYTE_SIZES_LIST = [512 * KB, 1 * MB, 4 * MB] # , 64 * MB, 128 * MB, 256 * MB]
+GLOBAL_ELEM_SIZES_LIST = [dsize // 2 for dsize in GLOBAL_BYTE_SIZES_LIST]
+WORLD_SIZE_LIST = [2, 4, 8, 16, 32, 64, 128]
 
 OUT_OF_MEM_LATENCY = 10**9
 
@@ -134,7 +137,7 @@ def get_local_rank():
 
 def get_world_size():
     if "SLURM_NPROCS" in os.environ:
-        return int(os.environ["SLURM_NPROCS"]) % 8
+        return int(os.environ["SLURM_NPROCS"])
     else:
         return 1
 
@@ -225,11 +228,8 @@ def build_process_gourp(max_world_size):
         if dist.is_initialized():
             world_size = dist.get_world_size()
             node_nums = world_size // 8
-            base_num = [2, 4, 6]
-            base_num = base_num + [8 * i for i in range(1, node_nums)]
+            base_num = [2, 4, 6] + [8 * i for i in range(1, node_nums)]
 
-            # if base_num <= 3:
-            #     return
             for gpu_nums in base_num:
                 ranks = [j for j in range(gpu_nums)]
                 print(ranks, flush=True)

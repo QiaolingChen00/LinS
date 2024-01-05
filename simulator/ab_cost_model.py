@@ -46,19 +46,18 @@ def coll_bus_bw(comm_op, size, n):
     raise ValueError(f"unknown comm_op: {comm_op}")
 
 
+# 需要判断是否打满带宽
 def get_scale_ratio(scale):
     # 通信扩展惩罚系数
     if scale <= 16:
         return 1
-    elif scale > 16 and scale <= 32:
-        return 1.1
-    elif scale > 32 and scale <= 64:
-        return 1.2
-    elif scale > 64:
-        return 1.4
+    elif scale == 32:
+        return 2
+    elif scale >= 64:
+        return 4
 
 
-def get_comm_cost(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostType = None):
+def get_comm_cost_logic(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostType = None):
     """根据通信量获得近似的通信延迟,这个函数考虑了跨节点带宽content的情景
     所以为了正确计算延迟，传入的 comm_volume 必须是以单个rank视角下的通信量
     (即代码中实际传入的通信量)
@@ -92,6 +91,24 @@ def get_comm_cost(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostTy
     bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
     return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
 
+
+def get_comm_cost_predict(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostType = None):
+    is_intra = gpc.check_pg_is_intra(parallel_mode)
+    if not is_intra:
+        num_partner = gpc.same_group_in_one_node(parallel_mode)
+        assert num_partner <= 8, f"num_partner: {num_partner}"
+        if parallel_mode == ParallelMode.WEIGHT:
+            assert num_partner == 1
+        if parallel_mode == ParallelMode.TENSOR:
+            assert num_partner == 1
+    else:
+        num_partner = 1
+
+    # TODO
+    pass
+
+
+get_comm_cost = get_comm_cost_logic
 
 allgather = functools.partial(get_comm_cost, comm_op=CostType.ALLGATHER)
 reducescatter = functools.partial(get_comm_cost, comm_op=CostType.REDUCESCATTER)
