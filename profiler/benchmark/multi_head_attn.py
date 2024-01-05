@@ -5,6 +5,7 @@ import math
 
 import torch
 from einops import rearrange
+from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
 from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
 from torch import nn
 
@@ -17,21 +18,18 @@ BENCH_TYPE = "flash_attn"
 
 
 class MHA(nn.Module):
-    def __init__(self, head_dim, causal=True, dropout=False, use_flash_attn=True) -> None:
+    def __init__(self, head_dim, causal=True, attn_drop_rate=0) -> None:
         super().__init__()
-        softmax_scale = 1 / math.sqrt(head_dim)
+        self.softmax_scale = 1 / math.sqrt(head_dim)
         self.causal = causal
         self.head_dim = head_dim
-        inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
-        self.inner_attn = inner_attn_cls(causal=self.causal, softmax_scale=softmax_scale, attention_dropout=dropout)
+        self.inner_attn = FlashSelfAttention(causal=causal)
 
     def forward(self, qkv, cu_seqlens, max_seqlen):
-        # qkv = self.Wqkv(x)  # total x hsz'
-        qkv = rearrange(qkv, "t (three h d) -> t three h d", three=3, d=self.head_dim)  # total x 3 x n_head x d
-        context = self.inner_attn(qkv, causal=self.causal, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
-
-        context = rearrange(context, "b h d -> b (h d)")  # recover the shape
-        # out = self.out_proj(context)
+        qkv = rearrange(qkv, "t (three h d) -> t three h d", three=3, d=self.head_dim)
+        context = self.inner_attn(qkv, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, causal=self.causal)
+        context = rearrange(context, "b h d -> b (h d)")
+        return context
 
 
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
@@ -43,18 +41,20 @@ class UnitMultiHeadAttn(UnitBench):
         "dtype": [torch.bfloat16],
         "micro_bsz": [1, 2, 4, 8],
         "tp_size": [1, 2, 4, 8, 16, 32, 64],
+        "is_fwd": [True, False],
     }
 
     # test_loop = {
-    #     "seq_len": [8 * K],
-    #     "num_heads_and_hidden_dim": [(40, 5120)],  #
+    #     "seq_len": [256 * K],
+    #     "num_heads_and_hidden_dim": [(64, 8192)],  #
     #     # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
     #     "dtype": [torch.bfloat16],
-    #     "micro_bsz": [1, 2],
-    #     "tp_size": [2],
+    #     "micro_bsz": [1],
+    #     "tp_size": [16],
+    #     "is_fwd": [True, False],  # fwd: 340ms, bwd: 870ms
     # }
 
-    def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size) -> None:
+    def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size, is_fwd) -> None:
         num_heads, embed_dim = num_heads_and_hidden_dim
         self.tp_size = tp_size
         self.seq_len = seq_len
@@ -64,6 +64,7 @@ class UnitMultiHeadAttn(UnitBench):
         self.dtype_size = 2 if self.dtype == torch.bfloat16 else 4
         self.micro_bsz = micro_bsz
         self.oom = False
+        self.is_fwd = is_fwd
 
         assert self.embed_dim % self.tp_size == 0
         assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
@@ -108,22 +109,36 @@ class UnitMultiHeadAttn(UnitBench):
             size=(self.packed_length, 3 * self.num_atten_head_tp * self.head_dim),
             dtype=self.dtype,
             device=self.device,
+            requires_grad=True,
         )
 
         self.dtype_size = self.qkv.element_size()
         self.indexs = torch.tensor(data=indexs, dtype=torch.int32, device=self.device)
         self.cu_seqlens = torch.tensor(data=cu_seqlens, dtype=torch.int32, device=self.device)
         self.MHA = MHA(head_dim=self.head_dim, causal=True)
+        if not self.is_fwd:
+            self.output = self.run_fwd()
+            self.grad = torch.randn_like(self.output) / 32  # avoid grad is too large.
 
     def run(self):
-        self.MHA(self.qkv, cu_seqlens=self.cu_seqlens, max_seqlen=self.seq_len)
+        if self.is_fwd:
+            self.run_fwd()
+        else:
+            self.run_bwd(self.output, self.grad)
+
+    def run_fwd(self):
+        context = self.MHA(self.qkv, cu_seqlens=self.cu_seqlens, max_seqlen=self.seq_len)
+        return context
+
+    def run_bwd(self, output, grad):
+        output.backward(grad, retain_graph=True)
 
     @staticmethod
-    def gen_store_key(micro_bsz, seq_len, embed_dim, num_heads, tp_size):
-        return f"b_{micro_bsz}_s_{seq_len}_h_{embed_dim}_a_{num_heads}_tp_{tp_size}"
+    def gen_store_key(micro_bsz, seq_len, embed_dim, num_heads, tp_size, is_fwd):
+        return f"b_{micro_bsz}_s_{seq_len}_h_{embed_dim}_a_{num_heads}_tp_{tp_size}_fwd_{is_fwd}"
 
     def complexity(self):
         return UnitMultiHeadAttn.gen_store_key(
-            self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size
+            self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size, self.is_fwd
         )
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

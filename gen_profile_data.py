@@ -9,5 +9,5 @@ if __name__ == "__main__":
 
     build_type_list = [CostType.FLASH_ATTN] # CostType.LINEAR, 
     cost_model = GenCostModel(
-        is_master=get_global_rank() == 0, re_build_cost_data=True, build_type_list=build_type_list
+        is_master=get_global_rank() == 0, re_build_cost_data=True, build_type_list=build_type_list, dump=True
     )

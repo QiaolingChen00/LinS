@@ -10,7 +10,7 @@ def get_atten_cost_polynomial(complexity):
     return get_predict_or_kv_cost(CostType.LINEAR, complexity)
 
 
-def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
+def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp, is_fwd):
     """_summary_
 
     Args:
@@ -31,6 +31,7 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp):
         embed_dim=head_dim,
         num_heads=num_heads,
         tp_size=sp_tp,
+        is_fwd=is_fwd,
     )
     # import pdb; pdb.set_trace()
     print(
@@ -132,12 +133,12 @@ class TransformerComputation:
 
         return total_latency
 
-    def _compute_attn(self):
+    def _compute_attn(self, is_fwd):
         """
         compute the latency for attention in one transformer layer
         """
         if self.use_fa:
-            total_latency = get_atten_cost_predict(self.b, self.s, self.h, self.a, self.sp_scale)
+            total_latency = get_atten_cost_predict(self.b, self.s, self.h, self.a, self.sp_scale, is_fwd)
         else:
             # QK^T matrix multiplication
             # (b, s, h/sp) * (b, s, h/sp)^T
@@ -175,7 +176,7 @@ class TransformerComputation:
         linears_latency = self._compute_linears() * (self.ckpt + 1) + self._compute_linears() * 2
 
         # compute the latency for attention
-        attn_latency = self._compute_attn() * (self.ckpt + 1) + self._compute_attn() * 2
+        attn_latency = self._compute_attn(is_fwd=True) * (self.ckpt + 1) + self._compute_attn(is_fwd=False)
 
         # the computation for each transformer layer
         # transformer_latency = linears_latency + attn_latency
