@@ -7,8 +7,10 @@ if __name__ == "__main__":
     if world_size > 1:
         build_process_gourp(world_size)
 
-    # build_type_list = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.BROADCAST] # CostType.LINEAR, 
-    build_type_list = [CostType.ALLGATHER]
+    build_type_list = [CostType.ALL2ALL, CostType.ALLREDUCE, CostType.REDUCESCATTER, CostType.ALLGATHER, CostType.BROADCAST] # CostType.LINEAR, 
+    # build_type_list = [CostType.ALLGATHER]
     cost_model = GenCostModel(
-        is_master=get_global_rank() == 0, re_build_cost_data=True, build_type_list=build_type_list, dump=True
+        is_master=get_global_rank() == 0, re_build_cost_data=True, build_type_list=build_type_list
     )
+    cost_model.build_cost_model_by_key_value()
+    cost_model.dump_data()

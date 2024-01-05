@@ -205,8 +205,11 @@ class SplineModel:
                 raise KeyError(f"not found FA key: {key}")
         else:
             try:
-                spline_model = self.spline_model_list[cost_type][world_size]
-                predict = spline_model(complexity)
+                if cost_type != CostType.LINEAR and world_size == 1:
+                    return 0
+                else:
+                    spline_model = self.spline_model_list[cost_type][world_size]
+                    predict = spline_model(complexity)
             except ValueError:
                 below_bounds, above_bounds = spline_model.x[0], spline_model.x[-1]
                 if complexity < below_bounds:
@@ -252,7 +255,7 @@ class GenCostModel:
             }
         )
         self.cost_data = None
-        self._data_prefix = "./data"
+        self._data_prefix = "data/cost_data"
         self.cost_kv_data = {}
         self.build_type_list = build_type_list
 
@@ -317,16 +320,5 @@ class GenCostModel:
                 if bench_type != CostType.LINEAR:
                     self.draw_pic(df, bench_type)
 
-            with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
+            with open(f"{self._data_prefix}/{bench_type}.pickle", "wb") as f:
                 pickle.dump(results, f)
-
-
-cost_model = None
-
-
-def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
-    global cost_model
-    if cost_model is None:
-        cost_model = SplineModel()
-
-    return cost_model.predict_cost(cost_type, complexity=complexity, **kwargs)

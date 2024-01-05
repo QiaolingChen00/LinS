@@ -2,8 +2,11 @@ import functools
 
 from simulator.context import ParallelMode
 from simulator.context import global_context as gpc
+from simulator.predict_cost_model import SplineModel
 from utils.common import BW, CostType
 
+cost_model = None
+# cost_model = None
 scale_ratio = [1.415134488, 1.208864145, 1.1, 1]
 
 
@@ -88,25 +91,26 @@ def get_comm_cost_logic(comm_volume: int, parallel_mode: ParallelMode, comm_op: 
             assert num_partner == 1
         comm_volume *= num_partner
 
-    bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
-    return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
+    global cost_model
+    if cost_model is None:
+        cost_model = SplineModel()
 
-
-def get_comm_cost_predict(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostType = None):
-    is_intra = gpc.check_pg_is_intra(parallel_mode)
-    if not is_intra:
-        num_partner = gpc.same_group_in_one_node(parallel_mode)
-        assert num_partner <= 8, f"num_partner: {num_partner}"
-        if parallel_mode == ParallelMode.WEIGHT:
-            assert num_partner == 1
-        if parallel_mode == ParallelMode.TENSOR:
-            assert num_partner == 1
+    if comm_op == CostType.P2P:
+        bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
+        return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
     else:
-        num_partner = 1
+        latency = cost_model.predict_cost(cost_type=comm_op, complexity=comm_volume, world_size=scale)
+        print(f"comm_op: {comm_op}, world_size:{scale}, comm_volume: {comm_volume/1024**2:.3f} MB, latency: {latency*1000:.2f} ms")
+        return latency
 
-    # TODO
-    pass
 
+def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
+    global cost_model
+    if cost_model is None:
+        cost_model = SplineModel()
+
+    return cost_model.predict_cost(cost_type, complexity=complexity, **kwargs)
+                                                                                  
 
 get_comm_cost = get_comm_cost_logic
 
