@@ -13,9 +13,10 @@ from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
 import profiler.benchmark
+from copy import deepcopy
 from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
 from profiler.profiler import run_profile
-from utils.common import MB, OUT_OF_MEM_LATENCY, CostType
+from utils.common import MB, OUT_OF_MEM_LATENCY, CostType, WORLD_SIZE_LIST
 from utils.config import Config
 
 
@@ -145,7 +146,7 @@ class SplineModel:
             list_data = []
             for complexity in total_results[world_size].keys():
                 for value in total_results[world_size][complexity]:
-                    list_data.append([value["lat"], complexity])
+                    list_data.append([value["lat"], complexity])    # p data[2][524288][0]['lat']
 
             # list_data.sort(key=functools.cmp_to_key(my_compare))
             data_list = list(map(list, zip(*list_data)))
@@ -153,22 +154,39 @@ class SplineModel:
 
         return reformat_data
 
+    def see_base_value(self, cost_type, world_size, x, y):
+        # 可视化数据
+        plt.figure(figsize=(12, 6))
+        plt.plot(x, y)
+        plt.xlabel("Data Transferred (Byte)")
+        plt.ylabel("Latency (s)")
+        plt.title(f"{cost_type}_{world_size}")
+        plt.legend()
+        plt.xscale("log")
+        plt.grid(True)
+        plt.savefig(f"{cost_type}_{world_size}.jpg")
+        plt.show()
+
     def build_model(self):
         for cost_type, cost_data in self.data.items():
-            if cost_type != CostType.FLASH_ATTN:  # fa我们直接查表，不预测
-                cost_data = SplineModel.reformat_data_to_cost_model(cost_data)
+            if cost_type != CostType.FLASH_ATTN:
+                try:
+                    cost_data = SplineModel.reformat_data_to_cost_model(cost_data)
+                except TypeError as e:
+                    print(f"e : {e}", flush=True)
+                    import pdb; pdb.set_trace()
+
                 for world_size, data in cost_data.items():
                     try:
                         x = data["Data_B"]
                         y = data["Latency_s"]
                     except KeyError:
-                        import pdb
+                        import pdb; pdb.set_trace()
 
-                        pdb.set_trace()
                     self.spline_model_list[cost_type] = {}
                     self.spline_model_list[cost_type][world_size] = interp1d(x, y, kind="slinear")
-            else:
-                print(cost_data[1])
+                    self.see_base_value(cost_type, world_size, x, y)
+            else:   # fa我们直接查表，不预测
                 self.spline_model_list[cost_type] = {}
                 self.spline_model_list[cost_type][1] = cost_data[1]
 
@@ -255,7 +273,25 @@ class GenCostModel:
                 self.cost_kv_data[bench_type] = run_profile(self._profile_args, bench_type)
 
     def dump_data(self):
+        # p data[2][524288][0]['lat']
         for bench_type, results in self.cost_kv_data.items():
+            indexs, columns = [], None
+            results = []
+            for world_size, values in results.items():
+                indexs.append(world_size)
+                one_col = []
+                tmp_columns = []
+                for vol, latency in values.items():
+                    tmp_columns.append(vol)
+                    one_col.append()
+
+                if columns is None:
+                    columns = deepcopy() 
+
+                results.append(one_col)
+            
+            df = pd.DataFrame(results, columns=['sep', 'oct', 'nov'], index=indexs)
+
             with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
                 pickle.dump(results, f)
 

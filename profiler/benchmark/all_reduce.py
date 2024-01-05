@@ -12,20 +12,8 @@ BENCH_TYPE = "all_reduce"
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitBenchAllReduce(UnitBench):
     test_loop = {
-        "global_size": [
-            512 * KB,
-            1 * MB,
-            4 * MB,
-            64 * MB,
-            128 * MB,
-            256 * MB,
-            512 * MB,
-            1 * GB,
-            2 * GB,
-            4 * GB,
-            8 * GB,
-        ],
-        "world_size": [2, 4, 8, 16, 24, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
+        "global_size": GLOBAL_ELEM_SIZES_LIST,
+        "world_size": WORLD_SIZE_LIST,  # 7B, (13B, 20B), 30B, 65B, 123B
         "async_op": [False],  # it is not work!! False,
         "dtype": [torch.bfloat16],
     }
@@ -44,7 +32,7 @@ class UnitBenchAllReduce(UnitBench):
             self.buffer = None
         else:
             self.buffer = torch.ones(self.world_size, self.unit_size, dtype=self.dtype).to(f"cuda:{get_local_rank()}")
-        self.dtype_size = self.buffer.element_size()
+            self.input_buffer_size = self.buffer.element_size() * self.buffer.numel()
 
     def run(self):
         if self.buffer is None or not self.do_it:
@@ -55,4 +43,4 @@ class UnitBenchAllReduce(UnitBench):
             handler.wait()
 
     def complexity(self):
-        return self.dtype_size * self.buffer.nelement()
+        return self.input_buffer_size
