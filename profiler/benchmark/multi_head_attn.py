@@ -5,13 +5,11 @@ import math
 
 import torch
 from einops import rearrange
-
-# from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
-# from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
-from torch import nn
-
+from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
+from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
 from profiler.registry import BENCHMARK_INITIALIZER
-from utils.common import K, get_local_rank
+from torch import nn
+from utils.common import TP_SIZE_RANGE, K, get_local_rank
 
 from .base_benchmark import UnitBench
 
@@ -41,7 +39,7 @@ class UnitMultiHeadAttn(UnitBench):
         # "num_heads_and_hidden_dim": [(80, 10240)],  # , 256 * K
         "dtype": [torch.bfloat16],
         "micro_bsz": [1, 2, 4, 8],
-        "tp_size": [1, 2, 4, 8, 16, 32, 64],
+        "tp_size": TP_SIZE_RANGE,
         "is_fwd": [True, False],
     }
 
@@ -57,6 +55,7 @@ class UnitMultiHeadAttn(UnitBench):
 
     def __init__(self, seq_len, num_heads_and_hidden_dim, dtype, micro_bsz, tp_size, is_fwd) -> None:
         num_heads, embed_dim = num_heads_and_hidden_dim
+        self.num_heads_and_hidden_dim = num_heads_and_hidden_dim
         self.tp_size = tp_size
         self.seq_len = seq_len
         self.num_heads = num_heads
@@ -74,6 +73,7 @@ class UnitMultiHeadAttn(UnitBench):
 
         self.num_atten_head_tp = num_heads // self.tp_size
         self.head_dim = self.embed_dim // num_heads
+        self.tp_embedding_dim = self.embed_dim // self.tp_size
 
         self.packed_length = self.seq_len * self.micro_bsz
         self.device = f"cuda:{get_local_rank()}"
@@ -106,8 +106,10 @@ class UnitMultiHeadAttn(UnitBench):
                 False
             ), f"warning : mem_used: {mem_used/1024**3:.2f} GB, seq_len: {self.seq_len}, embed_dim: {self.embed_dim}, tp_size: {self.tp_size}"
 
+        assert self.tp_embedding_dim == self.num_atten_head_tp * self.head_dim
+
         self.qkv = torch.rand(
-            size=(self.packed_length, 3 * self.num_atten_head_tp * self.head_dim),
+            size=(self.packed_length, 3 * self.tp_embedding_dim),
             dtype=self.dtype,
             device=self.device,
             requires_grad=True,
@@ -135,11 +137,11 @@ class UnitMultiHeadAttn(UnitBench):
         output.backward(grad, retain_graph=True)
 
     @staticmethod
-    def gen_store_key(micro_bsz, seq_len, embed_dim, num_heads, tp_size, is_fwd):
-        return f"b_{micro_bsz}_s_{seq_len}_h_{embed_dim}_a_{num_heads}_tp_{tp_size}_fwd_{is_fwd}"
+    def gen_store_key(micro_bsz, seq_len, num_heads_and_hidden_dim, tp_size, is_fwd):
+        _, embed_dim = num_heads_and_hidden_dim
+        tp_embedding_dim = embed_dim // tp_size
+        return f"b_{micro_bsz}_s_{seq_len}_h_{tp_embedding_dim}_fwd_{is_fwd}"
 
     def complexity(self):
-        return UnitMultiHeadAttn.gen_store_key(
-            self.micro_bsz, self.seq_len, self.embed_dim, self.num_heads, self.tp_size, self.is_fwd
-        )
+        return UnitMultiHeadAttn.gen_store_key(self.micro_bsz, self.seq_len, self.num_heads_and_hidden_dim, self.tp_size, self.is_fwd)
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

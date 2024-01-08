@@ -1,9 +1,10 @@
 import functools
 
+from utils.common import BW, CostType
+
 from simulator.context import ParallelMode
 from simulator.context import global_context as gpc
 from simulator.predict_cost_model import SplineModel
-from utils.common import BW, CostType
 
 cost_model = None
 # cost_model = None
@@ -54,10 +55,16 @@ def get_scale_ratio(scale):
     # 通信扩展惩罚系数
     if scale <= 16:
         return 1
-    elif scale == 32:
-        return 2
-    elif scale >= 64:
-        return 4
+    elif 16 < scale <= 32:
+        return 1.1
+    elif 32 < scale <= 64:
+        return 1.2
+    elif 64 < scale <= 256:
+        return 1.3
+    elif 256 < scale <= 512:
+        return 1.4
+    else:
+        return 1.5
 
 
 def get_comm_cost_logic(comm_volume: int, parallel_mode: ParallelMode, comm_op: CostType = None):
@@ -95,13 +102,13 @@ def get_comm_cost_logic(comm_volume: int, parallel_mode: ParallelMode, comm_op: 
     if cost_model is None:
         cost_model = SplineModel()
 
-    if comm_op == CostType.P2P:
-        bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
-        return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
-    else:
-        latency = cost_model.predict_cost(cost_type=comm_op, complexity=comm_volume, world_size=scale)
-        print(f"comm_op: {comm_op}, world_size:{scale}, comm_volume: {comm_volume/1024**2:.3f} MB, latency: {latency*1000:.2f} ms")
-        return latency
+    # if comm_op == CostType.P2P:
+    bw = BW.A800_NVL if is_intra else (BW.IB / get_scale_ratio(scale))
+    return coll_algo_bw(comm_op, comm_volume, scale) / bw  # 转换成ms小数点保留两位
+    # else:
+    #     latency = cost_model.predict_cost(cost_type=comm_op, complexity=comm_volume, world_size=scale)
+    #     print(f"comm_op: {comm_op}, world_size:{scale}, comm_volume: {comm_volume/1024**2:.3f} MB, latency: {latency*1000:.2f} ms")
+    #     return latency
 
 
 def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
@@ -110,7 +117,7 @@ def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
         cost_model = SplineModel()
 
     return cost_model.predict_cost(cost_type, complexity=complexity, **kwargs)
-                                                                                  
+
 
 get_comm_cost = get_comm_cost_logic
 
