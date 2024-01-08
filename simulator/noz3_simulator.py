@@ -208,6 +208,7 @@ class Constraint:
         self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
         self._use_strict_bsz = use_strict_bsz
         self._wp_penalty_coefficient = config.wp_penalty_coefficient
+        assert 0 < self._wp_penalty_coefficient <= 1
         if self._use_strict_bsz:
             assert (
                 not self.use_fixed_micro_bsz
@@ -697,17 +698,25 @@ class Constraint:
                                         print(f"not found FA key: {e}", flush=True)
                                         continue
 
-                                    overlap_latency = comp_wp
-                                    if wp > 1 and sp > 1:
-                                        if self.model_size < 30 and self.seq_len < 16 * 1024:
-                                            # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
-                                            penalty_coefficient = wp / 100
-                                            overlap_latency = (1 + penalty_coefficient) * max(comp_wp, wp_comm_cost)
-                                        else:
-                                            overlap_latency = max(comp_wp, wp_comm_cost)
+                                    # if wp > 1 and sp > 1:
+                                    #     if self.model_size < 30 and self.seq_len < 16 * 1024:
+                                    #         # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
+                                    #         penalty_coefficient = wp / 100
+                                    #         overlap_latency = (1 + penalty_coefficient) * max(comp_wp, wp_comm_cost)
+                                    #     else:
+                                    #         overlap_latency = max(comp_wp, wp_comm_cost)
+                                    # else:
+                                    #      overlap_latency =  max(comp_wp, wp_comm_cost)
+
+                                    if wp > 1:
+                                        overlap_latency = min(
+                                            comp_wp, wp_comm_cost
+                                        ) * self._wp_penalty_coefficient + max(comp_wp, wp_comm_cost)
+                                    else:
+                                        overlap_latency = comp_wp
 
                                     def overlaped_fwd_bwd_cost():
-                                        return overlap_latency + +sp_comm_cost + comp_attn
+                                        return overlap_latency + sp_comm_cost + comp_attn
 
                                     if pp == 1:
                                         fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()

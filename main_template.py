@@ -30,7 +30,7 @@ def main():
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
             "mem_threshold": {mem_threshold},
-            "wp_penalty_coefficient": 1.2,
+            "wp_penalty_coefficient": 0.2,
         }
     )
 
