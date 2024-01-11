@@ -5,11 +5,19 @@ import math
 
 import torch
 from einops import rearrange
-from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
-from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
-from profiler.registry import BENCHMARK_INITIALIZER
 from torch import nn
+
+from profiler.registry import BENCHMARK_INITIALIZER
 from utils.common import TP_SIZE_RANGE, K, get_local_rank
+
+try:
+    from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
+    from flash_attn.modules.mha import FlashSelfAttention, SelfAttention
+except ModuleNotFoundError:
+    flash_attn_qkvpacked_func = None
+    FlashSelfAttention = None
+    SelfAttention = None
+    print("import fa failed!", flush=True)
 
 from .base_benchmark import UnitBench
 
@@ -143,5 +151,7 @@ class UnitMultiHeadAttn(UnitBench):
         return f"b_{micro_bsz}_s_{seq_len}_h_{tp_embedding_dim}_fwd_{is_fwd}"
 
     def complexity(self):
-        return UnitMultiHeadAttn.gen_store_key(self.micro_bsz, self.seq_len, self.num_heads_and_hidden_dim, self.tp_size, self.is_fwd)
+        return UnitMultiHeadAttn.gen_store_key(
+            self.micro_bsz, self.seq_len, self.num_heads_and_hidden_dim, self.tp_size, self.is_fwd
+        )
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"
