@@ -43,7 +43,7 @@ def debug_profile(bench, test_case):
     if 'lat' not in test_case:
         test_case['lat'] = int.Maximum
 
-    print(f"{bench.complexity()}: micro_bsz: {test_case['micro_bsz']}, seq_len: {test_case['seq_len']}, num_heads_and_hidden_dim: {test_case['num_heads_and_hidden_dim']}, tp_size {test_case['tp_size']}, lat: {test_case['lat']}", flush=True)
+    # print(f"{bench.complexity()}: micro_bsz: {test_case['micro_bsz']}, seq_len: {test_case['seq_len']}, num_heads_and_hidden_dim: {test_case['num_heads_and_hidden_dim']}, tp_size {test_case['tp_size']}, lat: {test_case['lat']}", flush=True)
 
 
 def run_profile(args, test_type):
@@ -96,7 +96,8 @@ def run_profile(args, test_type):
         print(f"all test case nums: {len(total_cases)}", flush=True)
 
     for test_case in total_cases:
-        world_size = get_world_size()
+        world_size = test_case['world_size'] if 'world_size' in test_case else 1
+
         if world_size not in re_results:
             re_results[world_size] = {}
 
@@ -112,7 +113,9 @@ def run_profile(args, test_type):
             sync_all()
             avg_duration = run_benchmark(bench, args)
             test_case["lat"] = avg_duration
-        
+            # if dist.get_rank() == 0:
+            #     print(f"test_case: {test_case}, avg_duration: {avg_duration} ", flush=True)
+
         debug_profile(bench=bench, test_case=test_case)
 
         # assert bench.complexity() not in re_results

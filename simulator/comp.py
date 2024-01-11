@@ -1,4 +1,4 @@
-from simulator.predict_cost_model import get_predict_or_kv_cost
+from simulator.ab_cost_model import get_predict_or_kv_cost
 from utils.common import AlgoType, CostType
 
 

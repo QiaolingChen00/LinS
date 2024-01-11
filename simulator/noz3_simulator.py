@@ -61,6 +61,7 @@ class LinsSolutionNoZ3:
         modelsize,
         backward_mem_peak,
         blocks_activation,
+        overlap_latency,
     ):
         self.pp = pp
         self.sp = sp
@@ -100,6 +101,7 @@ class LinsSolutionNoZ3:
         self.modelsize = modelsize
         self.backward_mem_peak = backward_mem_peak
         self.blocks_activation = blocks_activation
+        self.overlap_latency = overlap_latency
 
     def __str__(self):
         return self.__repr__()
@@ -115,7 +117,7 @@ class LinsSolutionNoZ3:
             f" micro_bsz: {self.micro_bsz}"
             f" micro_num: {self.micro_num}, \n"
             f" modelsize: {self.modelsize}, algo_type: {self.algo_type}, pp_size: {self.pp}, sp_size: {self.sp}, wp_size: {self.wp_size}, zp_size: {self.zp_size}, \n"
-            f" one micro step fwd_bwd_cost: {self.fwd_bwd_cost*10**3:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, \n"
+            f" one micro step fwd_bwd_cost: {self.fwd_bwd_cost*10**3:.2f} ms, all_fwd_bwd_cost: {self.all_fwd_bwd_cost*10**3:.2f} ms, overlap_latency: {self.overlap_latency*10**3:.2f} ms\n"
             f" COMP: comp_wp: {self.comp_wp*10**3:.2f} ms, comp_attn: {self.comp_attn*10**3:.2f} ms, \n"
             f" COMM: pp_comm_cost: {self.pp_comm_cost*10**3:.2f} ms, zp_comm_cost: {self.zp_comm_cost*10**3:.2f} ms, one layer wp_comm_cost: {self.wp_comm_cost*10**3:.2f} ms, one layer sp_comm_cost: {self.sp_comm_cost*10**3:.2f} ms, wdp_comm_cost: {self.wdp_comm_cost*10**3:.2f} ms \n"
             f" total mem_cost: {self.total_mm_cost /GB:.2f} GB \n"
@@ -206,6 +208,7 @@ class Constraint:
         self._algo_list = [AlgoType.ISP, AlgoType.MSP, AlgoType.FSP]
         self._use_strict_bsz = use_strict_bsz
         self._wp_penalty_coefficient = config.wp_penalty_coefficient
+        assert 0 < self._wp_penalty_coefficient <= 1
         if self._use_strict_bsz:
             assert (
                 not self.use_fixed_micro_bsz
@@ -677,12 +680,7 @@ class Constraint:
                                         A[pp_i][sp_i][wp_i][zp_i] = mem_cost
 
                                     try:
-                                        (
-                                            wp_comm_cost,
-                                            sp_comm_cost,
-                                            comp_wp,
-                                            comp_attn,
-                                        ) = TransformerOverlapOneLayer(
+                                        (wp_comm_cost, sp_comm_cost, comp_wp, comp_attn,) = TransformerOverlapOneLayer(
                                             micro_bsz=micro_bsz,
                                             sp_size=sp,
                                             pp_size=pp,
@@ -700,17 +698,25 @@ class Constraint:
                                         print(f"not found FA key: {e}", flush=True)
                                         continue
 
+                                    # if wp > 1 and sp > 1:
+                                    #     if self.model_size < 30 and self.seq_len < 16 * 1024:
+                                    #         # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
+                                    #         penalty_coefficient = wp / 100
+                                    #         overlap_latency = (1 + penalty_coefficient) * max(comp_wp, wp_comm_cost)
+                                    #     else:
+                                    #         overlap_latency = max(comp_wp, wp_comm_cost)
+                                    # else:
+                                    #      overlap_latency =  max(comp_wp, wp_comm_cost)
+
+                                    if wp > 1:
+                                        overlap_latency = min(
+                                            comp_wp, wp_comm_cost
+                                        ) * self._wp_penalty_coefficient + max(comp_wp, wp_comm_cost)
+                                    else:
+                                        overlap_latency = comp_wp
+
                                     def overlaped_fwd_bwd_cost():
-                                        # 我们对overlap进行惩罚，优先级：切os->切梯度->切参数
-                                        return (
-                                            max(
-                                                wp_comm_cost
-                                                * (self._wp_penalty_coefficient if self.model_size < 30 else 1),
-                                                comp_wp,
-                                            )
-                                            + sp_comm_cost
-                                            + comp_attn
-                                        )
+                                        return overlap_latency + sp_comm_cost + comp_attn
 
                                     if pp == 1:
                                         fwd_bwd_cost = self._l * overlaped_fwd_bwd_cost()
@@ -751,7 +757,7 @@ class Constraint:
                                         pp_comm_cost=pp_comm_cost,
                                         activation=activation,
                                         zp_comm_cost=zp_comm_cost,
-                                        wp_comm_cost=wp_comm_cost * self._wp_penalty_coefficient,
+                                        wp_comm_cost=wp_comm_cost,
                                         sp_comm_cost=sp_comm_cost,
                                         os_mm_cost=os_mm_cost,
                                         p_g_mm_cost=p_g_mm_cost,
@@ -775,6 +781,7 @@ class Constraint:
                                         modelsize=self._param_elements / 10**9,
                                         backward_mem_peak=backward_mem_peak,
                                         blocks_activation=blocks_activation,
+                                        overlap_latency=overlap_latency,
                                     )
 
                                     cost = tgs

@@ -70,7 +70,7 @@ def main():
         }
     )
 
-    GLOBA_BSZ = 512 * 1024
+    GLOBA_BSZ = 4096 * 1024
     config = Config(
         {
             "world_size_max": 128,
@@ -79,14 +79,14 @@ def main():
             "global_bsz_min": GLOBA_BSZ,
             "global_bsz_max": GLOBA_BSZ,
             "sequence_length": 4 * 1024,
-            "model_size": 7,
+            "model_size": 13,
             "vocab_size": 103168,
             "dtype_size": 2,
             "use_fa": 1,
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
-            "mem_threshold": 77 * 1024**3,
-            "wp_penalty_coefficient": 1.2,
+            "mem_threshold": 74 * 1024**3,
+            "wp_penalty_coefficient": 0.2,
         }
     )
 

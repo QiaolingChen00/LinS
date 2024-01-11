@@ -6,11 +6,11 @@ from utils.common import *
 
 from .base_benchmark import UnitBench
 
-BENCH_TYPE = "all_gather"
+BENCH_TYPE = "broadcast"
 
 
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
-class UnitBenchAllGather(UnitBench):
+class UnitBenchBroadcast(UnitBench):
     test_loop = {
         "global_size": GLOBAL_ELEM_SIZES_LIST,
         "world_size": WORLD_SIZE_LIST,  # 7B, (13B, 20B), 30B, 65B, 123B
@@ -29,20 +29,18 @@ class UnitBenchAllGather(UnitBench):
         self.do_it = dist.get_rank() in set(dist.get_process_group_ranks(self.group))
 
         if dist.get_world_size() < world_size:
-            self.input = None
             self.output = None
         else:
             self.output = torch.ones(self.world_size, self.unit_size, dtype=self.dtype).to(f"cuda:{get_local_rank()}")
-            self.input = torch.ones(self.unit_size, dtype=self.dtype).to(f"cuda:{get_local_rank()}")
-            self.output_buffer_size = self.output.element_size() * self.output.numel()
+            self.input_buffer_size = self.output.element_size() * self.output.numel()
 
     def run(self):
         if self.output is None or not self.do_it:
             return
 
-        handler = dist._all_gather_base(self.output, self.input, async_op=self.async_op, group=self.group)
+        handler = dist.broadcast(self.output, src=0, async_op=self.async_op, group=self.group)
         if self.async_op:
             handler.wait()
 
     def complexity(self):
-        return self.output_buffer_size
+        return self.input_buffer_size

@@ -12,20 +12,8 @@ BENCH_TYPE = "all2all"
 @BENCHMARK_INITIALIZER.register_module(module_name=BENCH_TYPE)
 class UnitBenchAll2ALL(UnitBench):
     test_loop = {
-        "global_size": [
-            512 * KB,
-            1 * MB,
-            4 * MB,
-            64 * MB,
-            128 * MB,
-            256 * MB,
-            512 * MB,
-            1 * GB,
-            2 * GB,
-            4 * GB,
-            8 * GB,
-        ],
-        "world_size": [2, 4, 8, 16, 24, 32, 64],  # 7B, (13B, 20B), 30B, 65B, 123B
+        "global_size": GLOBAL_ELEM_SIZES_LIST,
+        "world_size": WORLD_SIZE_LIST,  # 7B, (13B, 20B), 30B, 65B, 123B
         "async_op": [False],  # it is not work!! False,
         "dtype": [torch.bfloat16],
     }
@@ -46,8 +34,7 @@ class UnitBenchAll2ALL(UnitBench):
         else:
             self.output = torch.ones(self.world_size, self.unit_size, dtype=self.dtype).to(f"cuda:{get_local_rank()}")
             self.input = torch.ones(self.world_size, self.unit_size, dtype=self.dtype).to(f"cuda:{get_local_rank()}")
-
-        self.dtype_size = self.output.element_size()
+            self.input_buffer_size = self.input.element_size() * self.input.numel()
 
     def run(self):
         if self.output is None or not self.do_it:
@@ -58,7 +45,7 @@ class UnitBenchAll2ALL(UnitBench):
             handler.wait()
 
     def complexity(self):
-        return self.dtype_size * self.output.nelement() * (self.world_size / (self.world_size - 1))  # TODO
+        return self.input_buffer_size
 
 
 if __name__ == "__main__":

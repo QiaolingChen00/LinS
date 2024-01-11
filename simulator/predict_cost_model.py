@@ -2,6 +2,7 @@ import functools
 import os
 import pickle
 from collections import OrderedDict
+from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,7 +16,7 @@ from sklearn.preprocessing import PolynomialFeatures
 import profiler.benchmark
 from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
 from profiler.profiler import run_profile
-from utils.common import MB, OUT_OF_MEM_LATENCY, CostType
+from utils.common import MB, OUT_OF_MEM_LATENCY, WORLD_SIZE_LIST, CostType
 from utils.config import Config
 
 
@@ -125,7 +126,7 @@ class PolynomialModel:
 
 class SplineModel:
     def __init__(self):
-        self._data_prefix = "data"
+        self._data_prefix = "data/cost_data"
         self.spline_model_list = {}
         self.data = {}
         self.load_data()
@@ -145,7 +146,7 @@ class SplineModel:
             list_data = []
             for complexity in total_results[world_size].keys():
                 for value in total_results[world_size][complexity]:
-                    list_data.append([value["lat"], complexity])
+                    list_data.append([value["lat"], complexity])  # p data[2][524288][0]['lat']
 
             # list_data.sort(key=functools.cmp_to_key(my_compare))
             data_list = list(map(list, zip(*list_data)))
@@ -154,21 +155,30 @@ class SplineModel:
         return reformat_data
 
     def build_model(self):
+        # p data[2][524288][0]['lat']
         for cost_type, cost_data in self.data.items():
-            if cost_type != CostType.FLASH_ATTN:  # fa我们直接查表，不预测
-                cost_data = SplineModel.reformat_data_to_cost_model(cost_data)
+            if cost_type != CostType.FLASH_ATTN:
+                try:
+                    cost_data = SplineModel.reformat_data_to_cost_model(cost_data)
+                except TypeError as e:
+                    print(f"e : {e}", flush=True)
+                    import pdb
+
+                    pdb.set_trace()
+
+                self.spline_model_list[cost_type] = {}
                 for world_size, data in cost_data.items():
                     try:
                         x = data["Data_B"]
                         y = data["Latency_s"]
-                    except KeyError:
+                    except KeyError as e:
+                        print(f"e : {e}", flush=True)
                         import pdb
 
                         pdb.set_trace()
-                    self.spline_model_list[cost_type] = {}
                     self.spline_model_list[cost_type][world_size] = interp1d(x, y, kind="slinear")
-            else:
-                print(cost_data[1])
+                    # self.see_base_value(cost_type, world_size, x, y)
+            else:  # fa我们直接查表，不预测
                 self.spline_model_list[cost_type] = {}
                 self.spline_model_list[cost_type][1] = cost_data[1]
 
@@ -194,9 +204,12 @@ class SplineModel:
             except KeyError as e:
                 raise KeyError(f"not found FA key: {key}")
         else:
-            spline_model = self.spline_model_list[cost_type][world_size]
             try:
-                predict = spline_model(complexity)
+                if cost_type != CostType.LINEAR and world_size == 1:
+                    return 0
+                else:
+                    spline_model = self.spline_model_list[cost_type][world_size]
+                    predict = spline_model(complexity)
             except ValueError:
                 below_bounds, above_bounds = spline_model.x[0], spline_model.x[-1]
                 if complexity < below_bounds:
@@ -205,6 +218,11 @@ class SplineModel:
                     lat = spline_model(above_bounds)
                     return lat * complexity / above_bounds  # 如果超过上界就线性扩展
                 raise ValueError(f"value error for cost_type:{cost_type}, complexity:{complexity}")
+            except KeyError as e:
+                print(f"e : {e}", flush=True)
+                import pdb
+
+                pdb.set_trace()
             else:
                 return predict
 
@@ -228,7 +246,7 @@ def my_compare(a, b):
 
 
 class GenCostModel:
-    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None, dump=True) -> None:
+    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None) -> None:
         self._master = is_master
         self._profile_args = Config(
             {
@@ -237,35 +255,70 @@ class GenCostModel:
             }
         )
         self.cost_data = None
-        self._data_prefix = "./data"
+        self._data_prefix = "data/cost_data"
         self.cost_kv_data = {}
-        self.build_cost_model_by_key_value(build_type_list)
-        if dump:
-            self.dump_data()
+        self.build_type_list = build_type_list
 
     def _log(self, msg: str):
         if self._master:
             print(msg, flush=True)
 
-    def build_cost_model_by_key_value(self, build_type_list):
+    def build_cost_model_by_key_value(self):
         if self.cost_data is None:
             self.cost_data = OrderedDict()
-            for bench_type in build_type_list:
+            for bench_type in self.build_type_list:
                 self._log(f"now test {bench_type}")
                 self.cost_kv_data[bench_type] = run_profile(self._profile_args, bench_type)
 
+    def load_cost_model_by_key_value(self):
+        self.cost_data = OrderedDict()
+        for bench_type in self.build_type_list:
+            self._log(f"now load {bench_type}")
+            with open(f"./data/{bench_type}.pickle", "rb") as f:
+                self.cost_kv_data[bench_type] = pickle.load(f)
+
+    def draw_pic(self, data, cost_type):
+        plt.figure(figsize=(12, 6))
+        world_sizes = list(data.index)
+        for vol in list(data.columns):
+            plt.plot(world_sizes, data[vol].values, label=f"{vol/1024**2:.2f} MB")
+
+        plt.xlabel("GPU nums")
+        plt.ylabel("Latency (s)")
+        plt.title(f"{cost_type}")
+        # plt.xscale("log")
+        # plt.yscale("log")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(f"./data/pics/{cost_type}.jpg")
+        plt.show()
+
     def dump_data(self):
+        # p data[2][524288][0]['lat']
         for bench_type, results in self.cost_kv_data.items():
-            with open(f"{self._data_prefix}/{bench_type}.pickle", "wb+") as f:
+            indexs, columns = [], None
+            tables = []
+            if bench_type != CostType.FLASH_ATTN:
+                for world_size, values in results.items():
+                    indexs.append(world_size)
+                    one_col = []
+                    tmp_columns = []
+                    for vol, latency in values.items():
+                        tmp_columns.append(vol)
+                        one_col.append(latency[0]["lat"])
+                    if columns is None:
+                        columns = deepcopy(tmp_columns)
+                    tables.append(one_col)
+
+                # print(f"bench_type: {bench_type}", flush=True)
+                # print(f"index: {indexs}", flush=True)
+                # print(f"columns: {columns}", flush=True)
+
+                df = pd.DataFrame(tables, columns=columns, index=indexs)
+                df.to_csv(f"./data/excel/{bench_type}.csv", index=False)
+
+                if bench_type != CostType.LINEAR:
+                    self.draw_pic(df, bench_type)
+
+            with open(f"{self._data_prefix}/{bench_type}.pickle", "wb") as f:
                 pickle.dump(results, f)
-
-
-cost_model = None
-
-
-def get_predict_or_kv_cost(cost_type: CostType, complexity=0, **kwargs):
-    global cost_model
-    if cost_model is None:
-        cost_model = SplineModel()
-
-    return cost_model.predict_cost(cost_type, complexity=complexity, **kwargs)
