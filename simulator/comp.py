@@ -1,5 +1,6 @@
-from simulator.ab_cost_model import get_predict_or_kv_cost
 from utils.common import AlgoType, CostType
+
+from simulator.ab_cost_model import get_predict_or_kv_cost
 
 
 def get_linear_cost(complexity):
@@ -10,13 +11,13 @@ def get_atten_cost_polynomial(complexity):
     return get_predict_or_kv_cost(CostType.LINEAR, complexity)
 
 
-def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp, is_fwd):
+def get_atten_cost_predict(micro_bsz, seq_len, hidden_dim, num_heads, sp_tp, is_fwd):
     """_summary_
 
     Args:
         micro_bsz (int): b
-        seq_len (int): seqlen，注意这里是完整的seqlen
-        head_dim (int): 原始的head_dim
+        seq_len (int): seqlen, 注意这里是完整的seqlen
+        hidden_dim (int): 原始的head_dim
         num_heads (int): 原始的num_heads
         sp_tp (int): sp for isp, tp for msp/fsp
 
@@ -28,14 +29,13 @@ def get_atten_cost_predict(micro_bsz, seq_len, head_dim, num_heads, sp_tp, is_fw
         complexity=0,
         micro_bsz=micro_bsz,
         seq_len=seq_len,
-        embed_dim=head_dim,
-        num_heads=num_heads,
+        num_heads_and_hidden_dim=(num_heads, hidden_dim),
         tp_size=sp_tp,
         is_fwd=is_fwd,
     )
     # import pdb; pdb.set_trace()
     print(
-        f"WGT: predict:{predict}, micro_bsz:{micro_bsz}, seq_len:{seq_len}, head_dim:{head_dim}, num_heads:{num_heads}, sp_tp:{sp_tp}",
+        f"WGT: predict:{predict}, micro_bsz:{micro_bsz}, seq_len:{seq_len}, hidden_dim:{hidden_dim}, num_heads:{num_heads}, sp_tp:{sp_tp}",
         flush=True,
     )
 

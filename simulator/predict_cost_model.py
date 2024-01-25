@@ -7,15 +7,14 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import profiler.benchmark
 import scipy.interpolate
+from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
+from profiler.profiler import run_profile
 from scipy.interpolate import interp1d
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures
-
-import profiler.benchmark
-from profiler.benchmark.multi_head_attn import UnitMultiHeadAttn
-from profiler.profiler import run_profile
 from utils.common import MB, OUT_OF_MEM_LATENCY, WORLD_SIZE_LIST, CostType
 from utils.config import Config
 
@@ -246,7 +245,7 @@ def my_compare(a, b):
 
 
 class GenCostModel:
-    def __init__(self, is_master=True, re_build_cost_data=False, build_type_list=None) -> None:
+    def __init__(self, is_master=True, build_type_list=None) -> None:
         self._master = is_master
         self._profile_args = Config(
             {

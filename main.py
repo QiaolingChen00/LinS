@@ -70,22 +70,24 @@ def main():
         }
     )
 
-    GLOBA_BSZ = 4096 * 1024
+    GPU_NUMS = 128
+    MIN_GLOBA_BSZ = 4096 * 1024
+    MAX_GLOBA_BSZ = 4096 * 1024
     config = Config(
         {
-            "world_size_max": 128,
-            "world_size_min": 128,
-            "global_bsz": GLOBA_BSZ,
-            "global_bsz_min": GLOBA_BSZ,
-            "global_bsz_max": GLOBA_BSZ,
+            "world_size_max": GPU_NUMS,
+            "world_size_min": GPU_NUMS,
+            "global_bsz": 4 * 1024**2,
+            "global_bsz_min": MIN_GLOBA_BSZ,
+            "global_bsz_max": MAX_GLOBA_BSZ,
             "sequence_length": 4 * 1024,
-            "model_size": 13,
+            "model_size": 104,
             "vocab_size": 103168,
             "dtype_size": 2,
             "use_fa": 1,
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
-            "mem_threshold": 74 * 1024**3,
+            "mem_threshold": 70 * 1024**3,
             "wp_penalty_coefficient": 0.2,
         }
     )
@@ -107,7 +109,7 @@ def main():
         debug=True,
         overlap_wdp=True,
         use_fixed_micro_bsz=False,
-        use_strict_bsz=True,
+        use_strict_bsz=False,
         config=config,
     )
     externl_sim.run_flexible_worldsize_loop()

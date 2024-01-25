@@ -51,6 +51,7 @@ GLOBAL_BYTE_SIZES_LIST = [512 * KB, 1 * MB, 4 * MB, 64 * MB, 128 * MB, 256 * MB,
 # GLOBAL_BYTE_SIZES_LIST = [512 * KB, 1 * MB, 4 * MB] # , 64 * MB, 128 * MB, 256 * MB]
 GLOBAL_ELEM_SIZES_LIST = [dsize // 2 for dsize in GLOBAL_BYTE_SIZES_LIST]
 WORLD_SIZE_LIST = [2, 4, 8, 16, 32, 64, 128]
+TP_SIZE_RANGE = [1] + list(range(2, 80 + 1, 2))
 
 OUT_OF_MEM_LATENCY = 10**9
 
@@ -96,6 +97,10 @@ def get_model_config(model_size):
         h = 8192
         a = 64
         l = 80
+    elif model_size == 104:
+        h = 10240
+        a = 80
+        l = 82
     else:
         raise ValueError(f"unsupport modesize: {model_size}")
 
