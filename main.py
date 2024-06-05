@@ -58,39 +58,50 @@ def main():
     # Solution:  pp: 1 sp: 2 micro_bsz: 1 micro_num: 1 algo_type: intern, wp_size: 2, zp_size: 4 total fwd_bwd_cost: 2051.20 ms,
     # pp_comm_cost: 0.00 ms, zp_comm_cost: 48.80 ms, wp_comm_cost: 1.80 ms, sp_comm_cost: 0.80 self.comp_wp: 32.70 ms,
     # self.comp_attn: 30.60 ms total mem_cost: 66.60 GB, activation: 34.00 GB, zp_mm_cost: 19.56 GB, wp_mm_cost: 13.04 GB
+    GPU_NUMS = 128
+    MIN_GLOBA_BSZ = 512 * 1024
+    MAX_GLOBA_BSZ = 2 * 512 * 1024
     config = Config(
         {
-            "world_size": 512,
-            "global_batch_size": 4 * (1024**2),
-            "sequence_length": 32 * 1024,
+            "world_size": GPU_NUMS,
+            "global_bsz": 4 * (1024**2),
+            "sequence_length": 4 * 1024,
             "model_size": 7,
             "vocab_size": 103168,
             "dtype_size": 2,
             "use_fa": 1,
-        }
-    )
-
-    GPU_NUMS = 128
-    MIN_GLOBA_BSZ = 4096 * 1024
-    MAX_GLOBA_BSZ = 4096 * 1024
-    config = Config(
-        {
             "world_size_max": GPU_NUMS,
             "world_size_min": GPU_NUMS,
-            "global_bsz": 4 * 1024**2,
             "global_bsz_min": MIN_GLOBA_BSZ,
             "global_bsz_max": MAX_GLOBA_BSZ,
-            "sequence_length": 4 * 1024,
-            "model_size": 104,
-            "vocab_size": 103168,
-            "dtype_size": 2,
-            "use_fa": 1,
+            "mem_threshold": 55 * 1024**3,
             "fixed_micro_num": 1,
             "fixed_micro_bsz": 1,
-            "mem_threshold": 70 * 1024**3,
             "wp_penalty_coefficient": 0.2,
         }
     )
+
+    # GPU_NUMS = 128
+    # MIN_GLOBA_BSZ = 4096 * 1024
+    # MAX_GLOBA_BSZ = 4096 * 1024
+    # config = Config(
+    #     {
+    #         "world_size_max": GPU_NUMS,
+    #         "world_size_min": GPU_NUMS,
+    #         "global_bsz": 4 * 1024**2,
+    #         "global_bsz_min": MIN_GLOBA_BSZ,
+    #         "global_bsz_max": MAX_GLOBA_BSZ,
+    #         "sequence_length": 4 * 1024,
+    #         "model_size": 104,
+    #         "vocab_size": 103168,
+    #         "dtype_size": 2,
+    #         "use_fa": 1,
+    #         "fixed_micro_num": 1,
+    #         "fixed_micro_bsz": 1,
+    #         "mem_threshold": 70 * 1024**3,
+    #         "wp_penalty_coefficient": 0.2,
+    #     }
+    # )
 
     # global_bsz (int): Global batch size, use_strict_bsz 为True时会用到这个bsz
     # global_bsz_min (int): global_bsz的搜素上界

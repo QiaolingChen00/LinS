@@ -1,5 +1,27 @@
-# 
+# 运行
+sensecore 910B环境（初始的fa+linear的profiling文件已经有了，通信还暂未抓性能数据，所以目前搜出来的并行策略会有些不准）
+```python
+source /ailab_internlm_data/llm_env/envs/0506/deeplink-20240506.sh
+python main.py > log.log 2>&1 # 现在开启了debug日志，输出会有些多，可以tail -n 200看下最终的搜索结果
+```
+<ul>
+<li> global_bsz (int): 这个参数use_strict_bsz 为True时会用到，否则就根据[global_bsz_min, global_bsz_max]搜索最佳的并行配置  </li>
+<li> global_bsz_min (int): global_bsz的搜素上界  </li>
+<li> global_bsz_max (int): global_bsz的搜素下界  </li>
+<li> max_world_size (int): world_size的搜素上界  </li>
+<li> min_world_size (int): world_size的搜素下界  </li>
+<li> seq_len (int): 序列长度 </li>
+<li> overlap_wdp (int): 是否考虑overlap wdp的通信  </li>
+<li> fixed_micro_num (int): 是否固定micro_num,默认为None不生效  </li>
+<li> fixed_micro_bsz (int): 是否固定micro_bsz ,默认为None不生效  </li>
+<li> use_strict_bsz(bool) : 如果为True，则会严格限制globa bsz为global_bsz参数的值  </li>
+<li> debug (bool): 是否输出额外的debug信息  </li>
+<li> config (dict): 模型的config  </li>
+</ul>
 
+
+
+# Backup
 
 - 背景：sp很重要，
 - 现有方法存在的问题
