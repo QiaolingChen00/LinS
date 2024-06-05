@@ -424,7 +424,7 @@ class Constraint:
         if self.min_cost_solution is not None:
             solutions_list = sorted(solutions_list, key=lambda solu: solu.tgs, reverse=True)
             print("--------------------- END -----------------------", flush=True)
-            print("Max TGS:", self.min_comm_cost * -1)
+            # print("Max TGS:", self.min_comm_cost)
             for i, solu in enumerate(solutions_list):
                 if i > 5:
                     break

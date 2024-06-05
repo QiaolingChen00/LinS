@@ -201,6 +201,7 @@ class SplineModel:
                 key = UnitMultiHeadAttn.gen_store_key(**kwargs)
                 return self.spline_model_list[cost_type][1][key][0]["lat"]
             except KeyError as e:
+                # import pdb; pdb.set_trace()
                 raise KeyError(f"not found FA key: {key}")
         else:
             try:

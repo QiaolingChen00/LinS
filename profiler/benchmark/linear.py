@@ -41,6 +41,16 @@ class UnitBenchLinear(UnitBench):
     def run(self):
         self.q(self.x)
 
+    @staticmethod
+    def gen_store_key(seq_len, hidden_dim, bias, dtype):
+        if dtype in [torch.bfloat16, torch.float16]:
+            element_size = 2
+        elif dtype is torch.float32:
+            element_size = 4
+        else:
+            assert False
+        return element_size * seq_len * hidden_dim * hidden_dim
+
     def complexity(self):
         return self.dtype * self.seq_len * self.hidden_dim * self.hidden_dim
         # return f"{self.seq_len} * {self.hidden_dim} * {self.hidden_dim}"

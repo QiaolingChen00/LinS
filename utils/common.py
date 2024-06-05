@@ -16,6 +16,7 @@ class CostType:
     BROADCAST = "broadcast"
     P2P = "p2p"
     FLASH_ATTN = "flash_attn"
+    FLASH_ATTN_NPU = "flash_attn_npu"
 
 
 class AlgoType:
