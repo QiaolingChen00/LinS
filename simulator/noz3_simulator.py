@@ -217,10 +217,10 @@ class Constraint:
             ), "If use 'use_fixed_micro_bsz', the solution satisfies 'use_strict_bsz' cannot be found."
 
         self.min_comm_cost, self.msp_min_cost, self.fsp_min_cost, self.isp_min_cost = (
-            float("inf"),
-            float("inf"),
-            float("inf"),
-            float("inf"),
+            float("-inf"),
+            float("-inf"),
+            float("-inf"),
+            float("-inf"),
         )
         self.min_cost_solution, self.msp_min_solu, self.fsp_min_solu, self.isp_min_solu = None, None, None, None
 
@@ -672,7 +672,7 @@ class Constraint:
         total_latency = all_fwd_bwd_cost + pp_comm_cost + wdp_comm_cost + zp_comm_cost  # fwd_bwd_cost 乘上梯度累加
 
         # 计算tgs,为了方便取max这里乘了一个-1
-        tgs = (-1 * now_global_bsz) / (world_size * total_latency)
+        tgs = -1 * ((now_global_bsz) / (world_size * total_latency))
 
         solu = LinsSolutionNoZ3(
             pp=pp,
@@ -799,24 +799,28 @@ class Constraint:
                                     )
                                     if solu is None:
                                         continue
-                                    cost = solu.tgs
+                                    cost = solu.tgs # positive
                                     solutions_list.append(solu)
-                                    if cost < self.min_comm_cost:
+                                    if cost > self.min_comm_cost:
+                                        print(f"into comm cost, before is {self.min_comm_cost}, new is {cost}")
                                         self.min_comm_cost = cost
                                         self.min_cost_solution = solu
 
                                     print(f"solu: {solu}", flush=True)
 
                                     if algo_type == AlgoType.MSP:
-                                        if cost < self.msp_min_cost:
+                                        if cost > self.msp_min_cost:
+                                            print(f"into msp mode, before is {self.msp_min_cost}, new is {cost}")
                                             self.msp_min_cost = cost
                                             self.msp_min_solu = solu
                                     elif algo_type == AlgoType.FSP:
-                                        if cost < self.fsp_min_cost:
+                                        if cost > self.fsp_min_cost:
+                                            print(f"into fsp mode, before is {self.fsp_min_cost}, new is {cost}")
                                             self.fsp_min_cost = cost
                                             self.fsp_min_solu = solu
                                     elif algo_type == AlgoType.ISP:
-                                        if cost < self.isp_min_cost:
+                                        if cost > self.isp_min_cost:
+                                            print(f"into isp mode, before is {self.isp_min_cost}, new is {cost}")
                                             self.isp_min_cost = cost
                                             self.isp_min_solu = solu
         return solutions_list
